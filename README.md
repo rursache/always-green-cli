@@ -1,8 +1,8 @@
-# always-green
+# always-green-cli
 
 Keep your Slack status green from a laptop or VPS you leave on.
 
-Tokens stay on that machine. Nothing is sent to a third-party service.
+Auth tokens stay local and private. Nothing is sent to a third-party service.
 
 ## Install
 
