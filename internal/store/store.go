@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"always-green/internal/paths"
-	"always-green/internal/schedule"
+	"github.com/rursache/always-green/internal/paths"
+	"github.com/rursache/always-green/internal/schedule"
 )
 
 type Config struct {

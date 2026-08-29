@@ -13,11 +13,11 @@ import (
 	"syscall"
 	"time"
 
-	"always-green/internal/ipc"
-	"always-green/internal/paths"
-	"always-green/internal/schedule"
-	"always-green/internal/slackx"
-	"always-green/internal/store"
+	"github.com/rursache/always-green/internal/ipc"
+	"github.com/rursache/always-green/internal/paths"
+	"github.com/rursache/always-green/internal/schedule"
+	"github.com/rursache/always-green/internal/slackx"
+	"github.com/rursache/always-green/internal/store"
 )
 
 type WorkspaceStatus struct {

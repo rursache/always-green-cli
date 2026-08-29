@@ -1,4 +1,4 @@
-module always-green
+module github.com/rursache/always-green
 
 go 1.25.0
 

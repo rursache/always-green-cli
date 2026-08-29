@@ -3,9 +3,9 @@ package importws
 import (
 	"fmt"
 
-	"always-green/internal/desktop"
-	"always-green/internal/slackx"
-	"always-green/internal/store"
+	"github.com/rursache/always-green/internal/desktop"
+	"github.com/rursache/always-green/internal/slackx"
+	"github.com/rursache/always-green/internal/store"
 )
 
 type Result struct {
@@ -17,7 +17,7 @@ type Result struct {
 func Save(st *store.Store, f desktop.Found) (Result, error) {
 	auth, err := slackx.AuthTest(f.Xoxc, f.Xoxd)
 	if err != nil {
-		return Result{}, fmt.Errorf("Slack rejected a desktop token: %w", err)
+		return Result{}, fmt.Errorf("Slack rejected these tokens: %w", err)
 	}
 	name := f.Name
 	if name == "" {

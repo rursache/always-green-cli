@@ -6,12 +6,12 @@ import (
 	"strings"
 	"time"
 
-	"always-green/internal/daemon"
-	"always-green/internal/desktop"
-	"always-green/internal/importws"
-	"always-green/internal/schedule"
-	"always-green/internal/slackx"
-	"always-green/internal/store"
+	"github.com/rursache/always-green/internal/daemon"
+	"github.com/rursache/always-green/internal/desktop"
+	"github.com/rursache/always-green/internal/importws"
+	"github.com/rursache/always-green/internal/schedule"
+	"github.com/rursache/always-green/internal/slackx"
+	"github.com/rursache/always-green/internal/store"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -426,19 +426,34 @@ func (m model) submitAdd() (tea.Model, tea.Cmd) {
 			DisplayName: profile.DisplayName, Email: profile.Email,
 		},
 	}
+	refresh := false
+	for _, existing := range m.workspaces {
+		if existing.TeamID == auth.TeamID {
+			refresh = true
+			if existing.Schedule != nil {
+				copied := *existing.Schedule
+				ws.Schedule = &copied
+			}
+			break
+		}
+	}
 	if err := m.store.SaveWorkspace(ws); err != nil {
 		m.err = err.Error()
 		return m, nil
 	}
 	_ = daemon.Reload()
 	m.reload()
-	m.screen = screenSchedule
-	m.openSchedule(ws)
-	m.info = "added " + name
 	m.err = ""
 	m.xoxcIn.SetValue("")
 	m.xoxdIn.SetValue("")
 	m.nameIn.SetValue("")
+	if refresh {
+		m.screen = screenList
+		m.info = "refreshed " + name
+		return m, pollPresence(m.workspaces)
+	}
+	m.openSchedule(ws)
+	m.info = "added " + name
 	return m, pollPresence(m.workspaces)
 }
 
@@ -496,9 +511,13 @@ func (m model) keySchedule(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "1", "2", "3", "4", "5", "6", "7":
+		if m.startIn.Focused() || m.endIn.Focused() {
+			return m, m.updateInputs(msg)
+		}
 		n, _ := strconv.Atoi(msg.String())
 		id := schedule.DayIDs[n-1]
 		m.schedDays[id] = !m.schedDays[id]
+		return m, nil
 	case "left":
 		if m.schedFocus == 0 {
 			m.startIn.SetValue(schedule.NudgeClock(m.startIn.Value(), -30))

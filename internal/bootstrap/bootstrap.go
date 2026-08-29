@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"always-green/internal/desktop"
-	"always-green/internal/importws"
-	"always-green/internal/slackx"
-	"always-green/internal/store"
+	"github.com/rursache/always-green/internal/desktop"
+	"github.com/rursache/always-green/internal/importws"
+	"github.com/rursache/always-green/internal/slackx"
+	"github.com/rursache/always-green/internal/store"
 
 	"golang.org/x/term"
 )
@@ -86,32 +86,73 @@ func fromChrome(st *store.Store, out io.Writer, in *bufio.Reader) error {
 	fmt.Fprintln(out, "     copy the value of cookie  d  (starts with xoxd-)")
 	fmt.Fprintln(out)
 
-	xoxc, err := readLine(in, out, "xoxc: ")
+	fmt.Fprintln(out, "Paste every xoxc (one per line). Then paste xoxd")
+	first, err := readLine(in, out, "xoxc: ")
 	if err != nil {
 		return err
 	}
-	xoxd, err := readLine(in, out, "xoxd: ")
-	if err != nil {
-		return err
+	if c, d, ok := maybeBlob(first); ok {
+		res, err := importws.Save(st, desktop.Found{Xoxc: c, Xoxd: d})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Saved %s\n", res.Name)
+		return nil
 	}
-	xoxc = strings.TrimSpace(xoxc)
+	tokens, leftover := takeXoxcLines(first, in)
+	xoxd := leftover
+	if !strings.HasPrefix(xoxd, "xoxd-") {
+		xoxd, err = readLine(in, out, "xoxd: ")
+		if err != nil {
+			return err
+		}
+	}
 	xoxd = strings.TrimSpace(xoxd)
-	if c, d, ok := maybeBlob(xoxc); ok {
-		xoxc, xoxd = c, d
-	}
-	// first token if they pasted several lines from the snippet
-	if i := strings.IndexByte(xoxc, '\n'); i >= 0 {
-		xoxc = strings.TrimSpace(xoxc[:i])
-	}
-	if !strings.HasPrefix(xoxc, "xoxc-") || !strings.HasPrefix(xoxd, "xoxd-") {
+	if len(tokens) == 0 || !strings.HasPrefix(xoxd, "xoxd-") {
 		return fmt.Errorf("those do not look like xoxc / xoxd tokens")
 	}
-	res, err := importws.Save(st, desktop.Found{Xoxc: xoxc, Xoxd: xoxd})
-	if err != nil {
-		return err
+	var n int
+	for _, xoxc := range tokens {
+		res, err := importws.Save(st, desktop.Found{Xoxc: xoxc, Xoxd: xoxd})
+		if err != nil {
+			fmt.Fprintf(out, "  skip: %v\n", err)
+			continue
+		}
+		fmt.Fprintf(out, "  %s %s\n", addedWord(res.Added), res.Name)
+		n++
 	}
-	fmt.Fprintf(out, "Saved %s\n", res.Name)
+	if n == 0 {
+		return fmt.Errorf("Slack rejected these tokens")
+	}
 	return nil
+}
+
+func takeXoxcLines(first string, in *bufio.Reader) (tokens []string, leftover string) {
+	add := func(s string) bool {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return true
+		}
+		if strings.HasPrefix(s, "xoxc-") {
+			tokens = append(tokens, s)
+			return true
+		}
+		leftover = s
+		return false
+	}
+	if !add(first) {
+		return tokens, leftover
+	}
+	for in.Buffered() > 0 {
+		line, err := in.ReadString('\n')
+		if !add(line) {
+			return tokens, leftover
+		}
+		if err != nil {
+			return tokens, leftover
+		}
+	}
+	return tokens, leftover
 }
 
 func importAll(st *store.Store, out io.Writer) (int, error) {

@@ -5,12 +5,12 @@ import (
 	"os"
 	"strings"
 
-	"always-green/internal/bootstrap"
-	"always-green/internal/daemon"
-	"always-green/internal/importws"
-	"always-green/internal/paths"
-	"always-green/internal/store"
-	"always-green/internal/tui"
+	"github.com/rursache/always-green/internal/bootstrap"
+	"github.com/rursache/always-green/internal/daemon"
+	"github.com/rursache/always-green/internal/importws"
+	"github.com/rursache/always-green/internal/paths"
+	"github.com/rursache/always-green/internal/store"
+	"github.com/rursache/always-green/internal/tui"
 )
 
 const version = "0.1.0"

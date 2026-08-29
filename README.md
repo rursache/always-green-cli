@@ -6,10 +6,16 @@ Tokens stay on that machine. Nothing is sent to a third-party service.
 
 ## Install
 
-Needs Go 1.22+ on macOS or Linux.
+Needs Go 1.25+ on macOS or Linux.
 
 ```
-git clone <repo>
+go install github.com/rursache/always-green/cmd/always-green@latest
+```
+
+Or from source:
+
+```
+git clone https://github.com/rursache/always-green
 cd always-green
 make build
 ```

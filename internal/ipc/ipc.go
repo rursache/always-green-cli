@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"always-green/internal/paths"
+	"github.com/rursache/always-green/internal/paths"
 )
 
 func Send(cmd string) (string, error) {

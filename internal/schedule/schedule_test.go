@@ -65,7 +65,15 @@ func TestInWindowOvernight(t *testing.T) {
 	}
 	late := time.Date(2026, 8, 31, 23, 0, 0, 0, loc)
 	if !InWindow(w, late, "UTC") {
-		t.Fatal("expected 23:00 inside overnight window")
+		t.Fatal("expected Monday 23:00 inside overnight window")
+	}
+	morning := time.Date(2026, 9, 1, 2, 0, 0, 0, loc)
+	if !InWindow(w, morning, "UTC") {
+		t.Fatal("expected Tuesday 02:00 inside Monday overnight window")
+	}
+	sunNight := time.Date(2026, 8, 31, 2, 0, 0, 0, loc)
+	if InWindow(w, sunNight, "UTC") {
+		t.Fatal("expected Monday 02:00 outside (that is Sunday night)")
 	}
 	mid := time.Date(2026, 8, 31, 12, 0, 0, 0, loc)
 	if InWindow(w, mid, "UTC") {

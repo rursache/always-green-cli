@@ -140,20 +140,6 @@ func InWindow(w *Window, now time.Time, tzName string) bool {
 	}
 	now = now.In(loc)
 
-	if len(w.ActiveDays) > 0 {
-		today := strings.ToLower(now.Weekday().String())
-		found := false
-		for _, d := range w.ActiveDays {
-			if d == today {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
 	start := w.StartTime
 	end := w.EndTime
 	if start == "" {
@@ -165,15 +151,37 @@ func InWindow(w *Window, now time.Time, tzName string) bool {
 	sh, sm, ok1 := ParseClock(start)
 	eh, em, ok2 := ParseClock(end)
 	if !ok1 || !ok2 {
-		return true
+		return dayAllowed(w.ActiveDays, now.Weekday())
 	}
 	cur := now.Hour()*60 + now.Minute()
 	startM := sh*60 + sm
 	endM := eh*60 + em
 	if endM < startM {
-		return cur >= startM || cur < endM
+		if cur >= startM {
+			return dayAllowed(w.ActiveDays, now.Weekday())
+		}
+		if cur < endM {
+			return dayAllowed(w.ActiveDays, now.AddDate(0, 0, -1).Weekday())
+		}
+		return false
+	}
+	if !dayAllowed(w.ActiveDays, now.Weekday()) {
+		return false
 	}
 	return cur >= startM && cur < endM
+}
+
+func dayAllowed(days []string, wd time.Weekday) bool {
+	if len(days) == 0 {
+		return true
+	}
+	name := strings.ToLower(wd.String())
+	for _, d := range days {
+		if d == name {
+			return true
+		}
+	}
+	return false
 }
 
 func Format(w *Window) string {

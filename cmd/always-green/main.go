@@ -1,6 +1,6 @@
 package main
 
-import "always-green/internal/cli"
+import "github.com/rursache/always-green/internal/cli"
 
 func main() {
 	cli.Main()
