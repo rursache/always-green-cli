@@ -1,0 +1,13 @@
+/always-green
+/always-green-daemon
+/bin/
+dist/
+artifacts/
+research/
+slack.green.sh
+*.whl
+*.exe
+*.test
+*.out
+vendor/
+.DS_Store
