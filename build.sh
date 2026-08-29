@@ -20,7 +20,7 @@ for pair in "${targets[@]}"; do
   out="dist/always-green-${os}-${arch}"
   echo "building $out"
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-    go build -trimpath -ldflags="-s -w" -o "$out" ./cmd/always-green
+    go build -trimpath -ldflags="-s -w -X github.com/rursache/always-green/internal/cli.version=${VERSION:-1.0.0}" -o "$out" ./cmd/always-green
 done
 
 echo

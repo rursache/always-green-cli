@@ -13,7 +13,7 @@ import (
 	"github.com/rursache/always-green/internal/tui"
 )
 
-const version = "0.1.0"
+var version = "1.0.0"
 
 func Main() {
 	if len(os.Args) < 2 {

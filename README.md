@@ -6,21 +6,9 @@ Tokens stay on that machine. Nothing is sent to a third-party service.
 
 ## Install
 
-Needs Go 1.25+ on macOS or Linux.
-
+```bash
+brew tap rursache/tap && brew trust rursache/tap && brew install always-green
 ```
-go install github.com/rursache/always-green/cmd/always-green@latest
-```
-
-Or from source:
-
-```
-git clone https://github.com/rursache/always-green
-cd always-green
-make build
-```
-
-Cross-compile with `./build.sh` (writes `dist/`).
 
 ## Usage
 
