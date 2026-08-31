@@ -133,7 +133,9 @@ func reauth() error {
 		return err
 	}
 	if daemon.Running() {
-		_ = daemon.Reload()
+		if err := daemon.Reload(); err != nil {
+			return fmt.Errorf("tokens saved, but the daemon did not pick them up: %w\nrun: always-green stop && always-green", err)
+		}
 	} else if err := start(); err != nil {
 		return err
 	}
@@ -144,7 +146,9 @@ func reauth() error {
 func start() error {
 	if daemon.Running() {
 		fmt.Println("Daemon is already running")
-		_ = daemon.Reload()
+		if err := daemon.Reload(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not reload the daemon: %v\n", err)
+		}
 		return nil
 	}
 	fmt.Println("Starting daemon...")
@@ -250,7 +254,9 @@ func importDesktop() error {
 		return fmt.Errorf("none of the desktop tokens were accepted by Slack")
 	}
 	if daemon.Running() {
-		_ = daemon.Reload()
+		if err := daemon.Reload(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not reload the daemon: %v\n", err)
+		}
 	}
 	fmt.Printf("Done (%d added, %d refreshed)\n", added, refreshed)
 	return nil

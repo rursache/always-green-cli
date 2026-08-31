@@ -105,6 +105,23 @@ func (s *sessionSet) drain() []*runtime {
 // Slack app, since on macOS that can mean a Keychain round trip
 const desktopRetryEvery = 30 * time.Minute
 
+// desktopRefreshTimeout caps a keychain round trip so a blocked prompt cannot
+// hold a session goroutine, and with it a shutdown, indefinitely
+const desktopRefreshTimeout = 60 * time.Second
+
+// refreshWithin gives up waiting after d. The refresh itself keeps running and
+// will simply land on a later attempt if it eventually succeeds.
+func refreshWithin(st *store.Store, teamID string, d time.Duration) error {
+	res := make(chan error, 1)
+	go func() { res <- importws.RefreshDesktop(st, teamID) }()
+	select {
+	case err := <-res:
+		return err
+	case <-time.After(d):
+		return fmt.Errorf("timed out reading the Slack app after %s", d)
+	}
+}
+
 // healer tracks in-flight and recent desktop refresh attempts. Attempts run off
 // the main loop because reading the Keychain can block for a long time.
 type healer struct {
@@ -466,7 +483,9 @@ func onTokenDead(st *store.Store, heal *healer, kick func(), teamID, name string
 	ws, ok := st.Workspace(teamID)
 	fromDesktop := ok && ws.Source == store.SourceDesktop
 	if fromDesktop && heal.claim(teamID, time.Now()) {
-		err := importws.RefreshDesktop(st, teamID)
+		// bounded: reading the keychain can block on a prompt, and this runs
+		// on the session goroutine that a shutdown may be waiting for
+		err := refreshWithin(st, teamID, desktopRefreshTimeout)
 		heal.release(teamID)
 		if err == nil {
 			log.Printf("[%s] tokens expired, refreshed from the Slack app", name)

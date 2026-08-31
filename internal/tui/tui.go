@@ -37,6 +37,9 @@ type presenceMsg struct {
 
 type tickMsg time.Time
 
+// how many one-second ticks between presence polls
+const presencePollTicks = 30
+
 type importScanMsg struct {
 	found []desktop.Found
 	err   error
@@ -53,6 +56,7 @@ type model struct {
 	err        string
 	info       string
 	width      int
+	ticks      int
 
 	nameIn   textinput.Model
 	xoxcIn   textinput.Model
@@ -107,8 +111,8 @@ func newModel(st *store.Store) model {
 		tz:        tz,
 		presence:  map[string]slackx.Presence{},
 		nameIn:    newInput("My company"),
-		xoxcIn:    newInput("xoxc-..."),
-		xoxdIn:    newInput("xoxd-..."),
+		xoxcIn:    newSecretInput("xoxc-..."),
+		xoxdIn:    newSecretInput("xoxd-..."),
 		startIn:   newInput("9:00 AM"),
 		endIn:     newInput("5:00 PM"),
 		schedDays: weekdaySet(),
@@ -123,6 +127,14 @@ func newInput(ph string) textinput.Model {
 	ti.Placeholder = ph
 	ti.CharLimit = 4096
 	ti.Width = 56
+	return ti
+}
+
+// secrets are masked so a token is not left on screen during a screenshare
+func newSecretInput(ph string) textinput.Model {
+	ti := newInput(ph)
+	ti.EchoMode = textinput.EchoPassword
+	ti.EchoCharacter = '*'
 	return ti
 }
 
@@ -164,9 +176,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		st, _ := daemon.ReadStatus()
 		m.daemon = st
-		if time.Now().Unix()%5 == 0 {
+		m.ticks++
+		// the daemon polls Slack itself and gets presence over the websocket,
+		// so the dashboard only needs an occasional refresh of its own
+		if m.ticks%presencePollTicks == 0 {
 			m.reload()
 			return m, tea.Batch(tick(), pollPresence(m.workspaces))
+		}
+		if m.ticks%2 == 0 {
+			m.reload()
 		}
 		return m, tick()
 	case presenceMsg:
