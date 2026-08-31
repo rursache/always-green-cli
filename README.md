@@ -81,15 +81,6 @@ Both are saved encrypted under `~/.always-green`, along with your workspace
 domain, which is what lets always-green mint a replacement `xoxc` later without
 asking you again.
 
-## A caveat worth knowing
-
-This drives Slack with a browser session outside a browser, which is not what
-Slack's session model intends. Slack does watch for automated cookie reuse and
-can invalidate a session it finds suspicious. Presence checks are deliberately
-infrequent for that reason, but the risk is not zero: if your workplace treats
-this as circumvention, that is a conversation to have with them, not with a
-tool.
-
 ## License
 
 [MIT](LICENSE)
