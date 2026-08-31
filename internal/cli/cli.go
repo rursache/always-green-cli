@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rursache/always-green-cli/internal/autostart"
 	"github.com/rursache/always-green-cli/internal/bootstrap"
 	"github.com/rursache/always-green-cli/internal/daemon"
 	"github.com/rursache/always-green-cli/internal/importws"
@@ -54,6 +55,8 @@ func Main() {
 		exit(importDesktop())
 	case "reauth", "relogin":
 		exit(reauth())
+	case "autostart":
+		exit(autostartCmd(os.Args[2:]))
 	case "tui", "ui":
 		exit(tui.Run())
 	case "uninstall":
@@ -79,6 +82,7 @@ Commands:
   tui          Open the dashboard (schedules, pause, add)
   snippet      Print the Chrome console snippet (xoxc only)
   reauth       Refresh tokens Slack has expired
+  autostart    Launch at login: autostart [on|off|status]
   import       Re-read workspaces from the Slack desktop app (Keychain)
   uninstall    Stop the daemon and print cleanup hints
   daemon       Run the daemon in the foreground (used internally)
@@ -103,6 +107,7 @@ func runDefault() error {
 	if err := start(); err != nil {
 		return err
 	}
+	enableAutostart()
 	fmt.Println()
 	fmt.Println("You're green while this machine is on")
 	name := progName()
@@ -110,6 +115,54 @@ func runDefault() error {
 	fmt.Println("  " + name + " tui      schedules / pause")
 	fmt.Println("  " + name + " stop     turn it off")
 	return nil
+}
+
+// enableAutostart registers the login item on first run. It is best effort:
+// staying green right now matters more than surviving a reboot, so a failure
+// is reported but never blocks startup.
+func enableAutostart() {
+	if !autostart.Supported() || autostart.Enabled() {
+		return
+	}
+	if err := autostart.Enable(); err != nil {
+		fmt.Fprintf(os.Stderr, "note: could not set up launch at login (%v)\n", err)
+		fmt.Fprintln(os.Stderr, "      run: "+progName()+" autostart on")
+		return
+	}
+	fmt.Println("Launch at login: enabled")
+}
+
+func autostartCmd(args []string) error {
+	if !autostart.Supported() {
+		return autostart.ErrUnsupported
+	}
+	action := "status"
+	if len(args) > 0 {
+		action = strings.ToLower(strings.TrimSpace(args[0]))
+	}
+	switch action {
+	case "on", "enable":
+		if err := autostart.Enable(); err != nil {
+			return err
+		}
+		fmt.Println("Launch at login: enabled")
+		return nil
+	case "off", "disable":
+		if err := autostart.Disable(); err != nil {
+			return err
+		}
+		fmt.Println("Launch at login: disabled")
+		return nil
+	case "status":
+		if autostart.Enabled() {
+			fmt.Println("Launch at login: enabled")
+		} else {
+			fmt.Println("Launch at login: disabled")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown autostart action %q, use on, off or status", action)
+	}
 }
 
 func startCmd() error {
@@ -191,6 +244,13 @@ func status() error {
 		fmt.Printf("Daemon:  running (PID %d)\n", daemon.PID())
 	} else {
 		fmt.Println("Daemon:  not running")
+	}
+	if autostart.Supported() {
+		state := "no"
+		if autostart.Enabled() {
+			state = "yes"
+		}
+		fmt.Printf("Login:   starts at login: %s\n", state)
 	}
 	st, err := store.Open()
 	if err != nil {
@@ -279,6 +339,13 @@ func importDesktop() error {
 func uninstall() error {
 	_ = daemon.Stop()
 	fmt.Println("Daemon stopped")
+	if autostart.Supported() {
+		if err := autostart.Disable(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not remove the login item: %v\n", err)
+		} else {
+			fmt.Println("Launch at login removed")
+		}
+	}
 	fmt.Println()
 	fmt.Println(progName() + " is a single binary: delete it from wherever you installed it")
 	fmt.Println("Config is in " + paths.Dir())

@@ -28,10 +28,27 @@ The daemon starts **always on**. Close the terminal; it keeps running.
 ```
 always-green-cli status
 always-green-cli stop
-always-green-cli tui          # schedules, pause, add another workspace
-always-green-cli reauth       # refresh tokens Slack has expired
-always-green-cli snippet      # Chrome console helper for xoxc
+always-green-cli tui            # schedules, pause, add another workspace
+always-green-cli reauth         # refresh tokens Slack has expired
+always-green-cli autostart off  # stop launching at login
+always-green-cli snippet        # Chrome console helper for xoxc
 ```
+
+## Launch at login
+
+Set up automatically on first run, so a reboot does not quietly leave you
+offline. It is a per-user login item, no sudo and nothing outside your home
+directory: a LaunchAgent on macOS, a systemd user unit on Linux.
+
+```
+always-green-cli autostart status
+always-green-cli autostart off
+always-green-cli autostart on
+```
+
+Starting at login is not the same as staying started: `always-green-cli stop`
+stays stopped until you start it again. `always-green-cli uninstall` removes
+the login item along with the daemon.
 
 ## When tokens expire
 
@@ -46,8 +63,8 @@ nothing. Workspaces from the **Slack desktop app** re-read the app. Workspaces
 
 You only get involved when the `d` cookie itself expires, which normally means
 you signed out, changed your password, or an admin ended the session. Then
-you get a desktop notification, `always-green-cli status` exits non-zero, and the
-next `always-green-cli` run walks you through pasting fresh tokens. `always-green
+you get a desktop notification, `always-green status` exits non-zero, and the
+next `always-green` run walks you through pasting fresh tokens. `always-green
 reauth` does the same on demand.
 
 ## Chrome tokens
