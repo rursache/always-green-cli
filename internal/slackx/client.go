@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -53,6 +54,30 @@ type APIError struct {
 
 func (e APIError) Error() string {
 	return e.Code
+}
+
+// HTTPError is returned when the response was not something Slack's API
+// produced: a proxy error page, a CDN block, an empty body. Keeping the status
+// separate from APIError stops a transport failure being read as a dead token.
+type HTTPError struct {
+	Status int
+	Body   string
+}
+
+func (e HTTPError) Error() string {
+	if e.Body == "" {
+		return fmt.Sprintf("slack returned HTTP %d", e.Status)
+	}
+	return fmt.Sprintf("slack returned HTTP %d: %s", e.Status, e.Body)
+}
+
+// RateLimited carries the server's Retry-After so callers can wait it out
+type RateLimited struct {
+	RetryAfter time.Duration
+}
+
+func (e RateLimited) Error() string {
+	return fmt.Sprintf("rate limited by slack, retry after %s", e.RetryAfter)
 }
 
 func TokenDead(code string) bool {
@@ -159,6 +184,10 @@ func GetUser(xoxc, xoxd, userID string) (UserProfile, error) {
 	}, nil
 }
 
+// maxBody caps how much of a response we read: Slack's replies are small, and
+// an intermediary error page should not be pulled into memory in full
+const maxBody = 4 << 20
+
 func do(method, rawURL, xoxc, xoxd string, body io.Reader, dest any) error {
 	req, err := http.NewRequest(method, rawURL, body)
 	if err != nil {
@@ -171,11 +200,36 @@ func do(method, rawURL, xoxc, xoxd string, body io.Reader, dest any) error {
 		return err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data, dest)
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return RateLimited{RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
+	}
+	if err := json.Unmarshal(data, dest); err != nil {
+		// a non-2xx that is not JSON is an intermediary, not Slack
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			return HTTPError{Status: resp.StatusCode, Body: snippet(data)}
+		}
+		return err
+	}
+	return nil
+}
+
+func retryAfter(h string) time.Duration {
+	if secs, err := strconv.Atoi(strings.TrimSpace(h)); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return 30 * time.Second
+}
+
+func snippet(data []byte) string {
+	s := strings.TrimSpace(string(data))
+	if len(s) > 120 {
+		s = s[:120] + "..."
+	}
+	return strings.Join(strings.Fields(s), " ")
 }
 
 func orUnknown(s string) string {
