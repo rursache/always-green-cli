@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -69,17 +70,30 @@ func Reauth(st *store.Store, out io.Writer, force bool) error {
 		if !ws.TokenInvalid && !force {
 			continue
 		}
-		if ws.Source != store.SourceDesktop {
-			remaining++
+		if ws.Source == store.SourceDesktop {
+			fmt.Fprintf(out, "Re-reading %s from the Slack app...\n", ws.Name)
+			if err := importws.RefreshDesktop(st, ws.TeamID); err != nil {
+				fmt.Fprintf(out, "  could not read it (%v), paste tokens instead\n", err)
+				remaining++
+				continue
+			}
+			fmt.Fprintf(out, "  refreshed %s\n", ws.Name)
 			continue
 		}
-		fmt.Fprintf(out, "Re-reading %s from the Slack app...\n", ws.Name)
-		if err := importws.RefreshDesktop(st, ws.TeamID); err != nil {
-			fmt.Fprintf(out, "  could not read it (%v), paste tokens instead\n", err)
-			remaining++
+		// the d cookie outlives the token, so try minting a new one before
+		// making the user go back to DevTools
+		fmt.Fprintf(out, "Refreshing %s from its saved cookie...\n", ws.Name)
+		err := importws.RefreshCookie(st, ws.TeamID)
+		if err == nil {
+			fmt.Fprintf(out, "  refreshed %s\n", ws.Name)
 			continue
 		}
-		fmt.Fprintf(out, "  refreshed %s\n", ws.Name)
+		if errors.Is(err, slackx.ErrCookieDead) {
+			fmt.Fprintf(out, "  the saved cookie has expired too, paste fresh tokens\n")
+		} else {
+			fmt.Fprintf(out, "  could not refresh it (%v), paste tokens instead\n", err)
+		}
+		remaining++
 	}
 	if remaining == 0 {
 		return nil

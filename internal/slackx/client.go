@@ -28,6 +28,7 @@ type Auth struct {
 	UserID string `json:"user_id"`
 	Team   string `json:"team"`
 	TeamID string `json:"team_id"`
+	URL    string `json:"url"`
 	Error  string `json:"error"`
 }
 

@@ -42,6 +42,7 @@ type Workspace struct {
 	Xoxd            string           `json:"xoxd"`
 	Paused          bool             `json:"is_paused"`
 	Source          string           `json:"source,omitempty"`
+	Domain          string           `json:"domain,omitempty"`
 	TokenInvalid    bool             `json:"token_invalid,omitempty"`
 	TokenInvalidAt  string           `json:"token_invalid_at,omitempty"`
 	UserInfo        *UserInfo        `json:"user_info,omitempty"`
@@ -146,6 +147,9 @@ func (s *Store) saveWorkspace(ws Workspace) error {
 			}
 			if ws.Source == "" {
 				ws.Source = existing.Source
+			}
+			if ws.Domain == "" {
+				ws.Domain = existing.Domain
 			}
 			ws.Paused = existing.Paused
 			file.Workspaces[i] = ws

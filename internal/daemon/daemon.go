@@ -105,15 +105,15 @@ func (s *sessionSet) drain() []*runtime {
 // Slack app, since on macOS that can mean a Keychain round trip
 const desktopRetryEvery = 30 * time.Minute
 
-// desktopRefreshTimeout caps a keychain round trip so a blocked prompt cannot
-// hold a session goroutine, and with it a shutdown, indefinitely
-const desktopRefreshTimeout = 60 * time.Second
+// refreshTimeout caps a refresh so a blocked keychain prompt or a stalled
+// request cannot hold a session goroutine, and with it a shutdown, forever
+const refreshTimeout = 60 * time.Second
 
 // refreshWithin gives up waiting after d. The refresh itself keeps running and
 // will simply land on a later attempt if it eventually succeeds.
-func refreshWithin(st *store.Store, teamID string, d time.Duration) error {
+func refreshWithin(st *store.Store, ws store.Workspace, d time.Duration) error {
 	res := make(chan error, 1)
-	go func() { res <- importws.RefreshDesktop(st, teamID) }()
+	go func() { res <- healWorkspace(st, ws) }()
 	select {
 	case err := <-res:
 		return err
@@ -419,8 +419,8 @@ func syncSessions(ctx context.Context, st *store.Store, sessions *sessionSet, he
 	for _, ws := range list {
 		// a workspace imported from the Slack app can fix itself: the app keeps
 		// rotating its own tokens, so re-read them instead of nagging the user
-		if ws.TokenInvalid && ws.Source == store.SourceDesktop {
-			tryDesktopHeal(st, heal, kick, ws, now)
+		if ws.TokenInvalid {
+			tryHeal(st, heal, kick, ws, now)
 		}
 		if ws.Eligible(now, tz) {
 			want[ws.TeamID] = ws
@@ -460,20 +460,31 @@ func syncSessions(ctx context.Context, st *store.Store, sessions *sessionSet, he
 	}
 }
 
-func tryDesktopHeal(st *store.Store, heal *healer, kick func(), ws store.Workspace, now time.Time) {
+func tryHeal(st *store.Store, heal *healer, kick func(), ws store.Workspace, now time.Time) {
 	if !heal.claim(ws.TeamID, now) {
 		return
 	}
-	name, teamID := ws.Name, ws.TeamID
+	name := ws.Name
+	teamID := ws.TeamID
 	go func() {
 		defer heal.release(teamID)
-		if err := importws.RefreshDesktop(st, teamID); err != nil {
-			log.Printf("[%s] desktop refresh failed: %v", name, err)
+		if err := healWorkspace(st, ws); err != nil {
+			log.Printf("[%s] token refresh failed: %v", name, err)
 			return
 		}
-		log.Printf("[%s] refreshed tokens from the Slack app", name)
+		log.Printf("[%s] refreshed tokens", name)
 		kick()
 	}()
+}
+
+// healWorkspace re-mints a token without troubling the user. A workspace from
+// the Slack app re-reads the app; one pasted from Chrome mints a new xoxc from
+// its d cookie, which outlives the token by months.
+func healWorkspace(st *store.Store, ws store.Workspace) error {
+	if ws.Source == store.SourceDesktop {
+		return importws.RefreshDesktop(st, ws.TeamID)
+	}
+	return importws.RefreshCookie(st, ws.TeamID)
 }
 
 // onTokenDead is called from a session goroutine once Slack rejects the tokens
@@ -482,17 +493,17 @@ func onTokenDead(st *store.Store, heal *healer, kick func(), teamID, name string
 	// auth.test but keep failing the websocket cannot spin the Slack app
 	ws, ok := st.Workspace(teamID)
 	fromDesktop := ok && ws.Source == store.SourceDesktop
-	if fromDesktop && heal.claim(teamID, time.Now()) {
-		// bounded: reading the keychain can block on a prompt, and this runs
-		// on the session goroutine that a shutdown may be waiting for
-		err := refreshWithin(st, teamID, desktopRefreshTimeout)
+	if ok && heal.claim(teamID, time.Now()) {
+		// bounded: a keychain read can block on a prompt, and this runs on the
+		// session goroutine that a shutdown may be waiting for
+		err := refreshWithin(st, ws, refreshTimeout)
 		heal.release(teamID)
 		if err == nil {
-			log.Printf("[%s] tokens expired, refreshed from the Slack app", name)
+			log.Printf("[%s] tokens expired, refreshed automatically", name)
 			kick()
 			return
 		}
-		log.Printf("[%s] desktop refresh failed: %v", name, err)
+		log.Printf("[%s] automatic refresh failed: %v", name, err)
 	}
 	if err := st.MarkTokenInvalid(teamID); err != nil {
 		log.Printf("[%s] could not flag expired tokens: %v", name, err)
