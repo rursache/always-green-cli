@@ -3,11 +3,11 @@ package slackx
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,13 +15,19 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// wsURL is a var so tests can point a session at a local server
+var wsURL = "wss://wss-primary.slack.com/"
+
+// tunable so tests can drive the loop without waiting on wall-clock minutes
+var (
+	pingEvery     = 30 * time.Second
+	tickleEvery   = 5 * time.Minute
+	presenceEvery = 60 * time.Second
+	baseBackoff   = 5 * time.Second
+)
+
 const (
-	wsURL          = "wss://wss-primary.slack.com/"
-	pingEvery      = 30 * time.Second
-	tickleEvery    = 5 * time.Minute
-	presenceEvery  = 60 * time.Second
 	maxConnectTry  = 10
-	baseBackoff    = 5 * time.Second
 	awayReconnectN = 5
 )
 
@@ -58,6 +64,16 @@ type Session struct {
 	awayHits   int
 
 	running atomic.Bool
+}
+
+// readEvent carries a read from one websocket. gen identifies which connection
+// produced it: closing a connection makes its reader report an error, and
+// without the generation that error looks exactly like the replacement
+// connection dying, which used to cascade into an endless reconnect loop.
+type readEvent struct {
+	gen  int
+	data []byte
+	err  error
 }
 
 func NewSession(name, teamID, userID, xoxc, xoxd string) *Session {
@@ -97,16 +113,23 @@ func (s *Session) Run(ctx context.Context) {
 	s.running.Store(true)
 	defer s.running.Store(false)
 	defer s.finish()
-
 	s.setState("connecting", false)
 
+	// closing done releases any reader still blocked handing us an event
+	done := make(chan struct{})
+	defer close(done)
+	events := make(chan readEvent, 8)
+
 	var conn *websocket.Conn
+	gen := 0
 	defer func() {
 		if conn != nil {
 			_ = conn.Close()
 		}
 	}()
 
+	// connect owns the reader lifecycle: every successful dial bumps the
+	// generation and starts exactly one reader for that connection
 	connect := func() bool {
 		if conn != nil {
 			_ = conn.Close()
@@ -126,6 +149,8 @@ func (s *Session) Run(ctx context.Context) {
 			return false
 		}
 		conn = c
+		gen++
+		go readLoop(c, gen, events, done)
 		s.mu.Lock()
 		s.connected = true
 		s.status = "active"
@@ -139,26 +164,34 @@ func (s *Session) Run(ctx context.Context) {
 		return true
 	}
 
-	for attempt := 1; attempt <= maxConnectTry; attempt++ {
-		if ctx.Err() != nil || !s.running.Load() {
-			return
+	// used for the first connection and for every later reconnect, so a
+	// transient blip mid-session gets the same backoff as one at startup
+	connectWithRetry := func() bool {
+		for attempt := 1; attempt <= maxConnectTry; attempt++ {
+			if ctx.Err() != nil || !s.running.Load() {
+				return false
+			}
+			if connect() {
+				return true
+			}
+			if !s.tokenValid || attempt == maxConnectTry {
+				return false
+			}
+			s.setState("reconnecting", false)
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(baseBackoff * time.Duration(attempt)):
+			}
 		}
-		if connect() {
-			break
-		}
-		if !s.tokenValid {
-			return
-		}
-		if attempt == maxConnectTry {
+		return false
+	}
+
+	if !connectWithRetry() {
+		if s.tokenValid {
 			s.setState("error", false)
-			return
 		}
-		s.setState("reconnecting", false)
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(baseBackoff * time.Duration(attempt)):
-		}
+		return
 	}
 
 	pingT := time.NewTicker(pingEvery)
@@ -168,46 +201,30 @@ func (s *Session) Run(ctx context.Context) {
 	defer tickleT.Stop()
 	defer presT.Stop()
 
-	incoming := make(chan []byte, 8)
-	readErr := make(chan error, 1)
-	startReader := func() {
-		go func(c *websocket.Conn) {
-			for {
-				_, data, err := c.ReadMessage()
-				if err != nil {
-					readErr <- err
-					return
-				}
-				select {
-				case incoming <- data:
-				default:
-				}
-			}
-		}(conn)
-	}
-	startReader()
-
 	for s.running.Load() {
 		select {
 		case <-ctx.Done():
 			return
-		case err := <-readErr:
-			log.Printf("[%s] websocket closed: %v", s.Name, err)
-			s.setState("disconnected", false)
-			if rejected, _ := s.tokensRejected(); rejected {
-				s.markDead()
-				return
+		case ev := <-events:
+			if ev.gen != gen {
+				continue // a reader for a connection we already replaced
 			}
-			if !connect() {
-				if !s.tokenValid {
+			if ev.err != nil {
+				log.Printf("[%s] websocket closed: %v", s.Name, ev.err)
+				s.setState("disconnected", false)
+				if rejected, _ := s.tokensRejected(); rejected {
+					s.markDead()
 					return
 				}
-				s.setState("error", false)
-				return
+				if !connectWithRetry() {
+					if s.tokenValid {
+						s.setState("error", false)
+					}
+					return
+				}
+				continue
 			}
-			startReader()
-		case data := <-incoming:
-			s.handleMessage(data)
+			s.handleMessage(ev.data)
 		case <-pingT.C:
 			if conn != nil {
 				_ = s.sendJSON(conn, map[string]any{"id": s.nextID(), "type": "ping"})
@@ -221,7 +238,7 @@ func (s *Session) Run(ctx context.Context) {
 				}
 			}
 		case <-presT.C:
-			s.checkPresence(ctx, connect, &conn, &startReader)
+			s.checkPresence(connect)
 			if !s.tokenValid {
 				return
 			}
@@ -229,9 +246,36 @@ func (s *Session) Run(ctx context.Context) {
 	}
 }
 
+func readLoop(c *websocket.Conn, gen int, events chan<- readEvent, done <-chan struct{}) {
+	for {
+		_, data, err := c.ReadMessage()
+		select {
+		case events <- readEvent{gen: gen, data: data, err: err}:
+		case <-done:
+			return
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
 func (s *Session) Stop() {
 	s.running.Store(false)
 }
+
+// handshakeError keeps the HTTP status Slack rejected the upgrade with, so
+// auth failures are classified on the real status rather than on error text
+type handshakeError struct {
+	Status int
+	err    error
+}
+
+func (e *handshakeError) Error() string {
+	return fmt.Sprintf("ws handshake %d: %v", e.Status, e.err)
+}
+
+func (e *handshakeError) Unwrap() error { return e.err }
 
 func (s *Session) dial() (*websocket.Conn, error) {
 	u, err := url.Parse(wsURL)
@@ -244,14 +288,14 @@ func (s *Session) dial() (*websocket.Conn, error) {
 
 	hdr := http.Header{}
 	hdr.Set("Cookie", "d="+s.Xoxd)
-	hdr.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+	hdr.Set("User-Agent", userAgent)
 	hdr.Set("Origin", "https://app.slack.com")
 
 	dialer := websocket.Dialer{HandshakeTimeout: 8 * time.Second}
 	conn, resp, err := dialer.Dial(u.String(), hdr)
 	if err != nil {
-		if resp != nil && resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 429 {
-			return nil, fmt.Errorf("ws handshake %d: %w", resp.StatusCode, err)
+		if resp != nil {
+			return nil, &handshakeError{Status: resp.StatusCode, err: err}
 		}
 		return nil, err
 	}
@@ -292,12 +336,15 @@ func (s *Session) handleMessage(data []byte) {
 	}
 }
 
-func (s *Session) checkPresence(ctx context.Context, connect func() bool, conn **websocket.Conn, startReader *func()) {
+func (s *Session) checkPresence(reconnect func() bool) {
 	pres, err := GetPresence(s.Xoxc, s.Xoxd, s.UserID)
 	if err != nil {
-		if api, ok := err.(APIError); ok && TokenDead(api.Code) {
+		var api APIError
+		if errors.As(err, &api) && TokenDead(api.Code) {
 			s.markDead()
+			return
 		}
+		log.Printf("[%s] presence check failed: %v", s.Name, err)
 		return
 	}
 	kind := classify(pres)
@@ -321,13 +368,9 @@ func (s *Session) checkPresence(ctx context.Context, connect func() bool, conn *
 		s.mu.Unlock()
 		if shouldReconnect(hits) {
 			log.Printf("[%s] reconnecting to reset presence", s.Name)
-			if connect() {
-				(*startReader)()
-			}
+			reconnect()
 		}
 	}
-	_ = ctx
-	_ = conn
 }
 
 func (s *Session) tokensRejected() (bool, error) {
@@ -335,7 +378,8 @@ func (s *Session) tokensRejected() (bool, error) {
 	if err == nil {
 		return false, nil
 	}
-	if api, ok := err.(APIError); ok && TokenDead(api.Code) {
+	var api APIError
+	if errors.As(err, &api) && TokenDead(api.Code) {
 		return true, err
 	}
 	return false, err
@@ -409,9 +453,9 @@ func shouldReconnect(hits int) bool {
 }
 
 func isAuthFail(err error) bool {
-	if err == nil {
+	var he *handshakeError
+	if !errors.As(err, &he) {
 		return false
 	}
-	s := err.Error()
-	return strings.Contains(s, " 401") || strings.Contains(s, " 403")
+	return he.Status == http.StatusUnauthorized || he.Status == http.StatusForbidden
 }

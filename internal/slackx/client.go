@@ -11,10 +11,10 @@ import (
 	"time"
 )
 
-const (
-	apiBase   = "https://slack.com/api"
-	userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
+// apiBase is a var so tests can point the client at a local server
+var apiBase = "https://slack.com/api"
+
+const userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 var tokenDead = map[string]struct{}{
 	"invalid_auth": {}, "not_authed": {}, "token_expired": {},
