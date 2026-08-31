@@ -1,6 +1,7 @@
 package ipc
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -11,22 +12,29 @@ import (
 	"github.com/rursache/always-green/internal/paths"
 )
 
+// maxLine bounds a single request or response so a wedged peer cannot make us
+// read forever. Status payloads grow with the workspace count, so this is
+// generous rather than tight.
+const maxLine = 4 << 20
+
 func Send(cmd string) (string, error) {
 	conn, err := net.DialTimeout("unix", paths.DaemonSock(), 3*time.Second)
 	if err != nil {
 		return "", err
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	if _, err := fmt.Fprintf(conn, "%s\n", cmd); err != nil {
 		return "", err
 	}
-	buf := make([]byte, 8192)
-	n, err := conn.Read(buf)
+	// read to the newline: a status reply is unbounded and a single fixed
+	// buffer silently truncated it once enough workspaces were configured
+	r := bufio.NewReaderSize(conn, 64<<10)
+	line, err := readLine(r)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(buf[:n])), nil
+	return line, nil
 }
 
 func Listen(handle func(cmd string) string) (net.Listener, error) {
@@ -47,18 +55,38 @@ func Listen(handle func(cmd string) string) (net.Listener, error) {
 			}
 			go func(c net.Conn) {
 				defer c.Close()
-				_ = c.SetDeadline(time.Now().Add(5 * time.Second))
-				buf := make([]byte, 256)
-				n, err := c.Read(buf)
+				_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+				r := bufio.NewReader(c)
+				cmd, err := readLine(r)
 				if err != nil {
 					return
 				}
-				cmd := strings.TrimSpace(string(buf[:n]))
 				_, _ = c.Write([]byte(handle(cmd) + "\n"))
 			}(conn)
 		}
 	}()
 	return ln, nil
+}
+
+// readLine reads until newline, tolerating a message split across reads
+func readLine(r *bufio.Reader) (string, error) {
+	var sb strings.Builder
+	for {
+		chunk, more, err := r.ReadLine()
+		if err != nil {
+			if sb.Len() > 0 {
+				return strings.TrimSpace(sb.String()), nil
+			}
+			return "", err
+		}
+		if sb.Len()+len(chunk) > maxLine {
+			return "", fmt.Errorf("ipc message exceeds %d bytes", maxLine)
+		}
+		sb.Write(chunk)
+		if !more {
+			return strings.TrimSpace(sb.String()), nil
+		}
+	}
 }
 
 func Encode(v any) string {

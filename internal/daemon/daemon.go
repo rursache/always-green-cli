@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -43,6 +45,60 @@ type Status struct {
 type runtime struct {
 	cancel context.CancelFunc
 	sess   *slackx.Session
+}
+
+// sessionSet guards the live sessions. The reconciler mutates them on the main
+// loop while the IPC handler reads them from its own goroutine, so an
+// unguarded map here is a fatal "concurrent map iteration and map write".
+type sessionSet struct {
+	mu   sync.Mutex
+	byID map[string]*runtime
+}
+
+func newSessionSet() *sessionSet {
+	return &sessionSet{byID: map[string]*runtime{}}
+}
+
+func (s *sessionSet) put(id string, rt *runtime) {
+	s.mu.Lock()
+	s.byID[id] = rt
+	s.mu.Unlock()
+}
+
+func (s *sessionSet) has(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.byID[id]
+	return ok
+}
+
+func (s *sessionSet) remove(id string) {
+	s.mu.Lock()
+	delete(s.byID, id)
+	s.mu.Unlock()
+}
+
+// list returns a copy so callers can iterate without holding the lock
+func (s *sessionSet) list() map[string]*runtime {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]*runtime, len(s.byID))
+	for id, rt := range s.byID {
+		out[id] = rt
+	}
+	return out
+}
+
+// drain empties the set and returns what was in it
+func (s *sessionSet) drain() []*runtime {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*runtime, 0, len(s.byID))
+	for id, rt := range s.byID {
+		out = append(out, rt)
+		delete(s.byID, id)
+	}
+	return out
 }
 
 // desktopRetryEvery bounds how often a self-healing workspace re-reads the
@@ -81,10 +137,33 @@ func (h *healer) release(teamID string) {
 	h.mu.Unlock()
 }
 
+// ErrAlreadyRunning means another daemon holds the lock
+var ErrAlreadyRunning = errors.New("another always-green daemon is already running")
+
+// acquireLock takes an exclusive advisory lock held for the process lifetime.
+// The kernel drops it however the process dies, so unlike a PID file it cannot
+// go stale, and a recycled PID cannot masquerade as a live daemon.
+func acquireLock() (*os.File, error) {
+	f, err := os.OpenFile(paths.DaemonLock(), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, ErrAlreadyRunning
+	}
+	return f, nil
+}
+
 func RunForeground() error {
 	if err := paths.EnsureDir(); err != nil {
 		return err
 	}
+	lock, err := acquireLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	logf, err := os.OpenFile(paths.DaemonLog(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -107,7 +186,7 @@ func RunForeground() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sessions := map[string]*runtime{}
+	sessions := newSessionSet()
 	heal := newHealer()
 	reload := make(chan struct{}, 1)
 	kick := func() {
@@ -126,6 +205,8 @@ func RunForeground() error {
 		case "stop":
 			cancel()
 			return "stopping"
+		case "ping":
+			return "ok"
 		case "status":
 			return ipc.Encode(snapshot(true, sessions))
 		default:
@@ -194,41 +275,61 @@ func Start() error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	for i := 0; i < 20; i++ {
-		time.Sleep(150 * time.Millisecond)
-		if Running() {
+	// wait for the socket to answer: Running() only proves the process exists,
+	// and a reload sent before ipc.Listen binds would be silently lost
+	for i := 0; i < 60; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if Ready() {
 			return nil
 		}
 	}
 	return fmt.Errorf("daemon did not start, see %s", paths.DaemonLog())
 }
 
+// Ready reports whether the daemon is listening and answering
+func Ready() bool {
+	_, err := ipc.Send("ping")
+	return err == nil
+}
+
 func Stop() error {
 	if !Running() {
 		return nil
 	}
+	// a shutdown can be waiting on a slow keychain read or websocket close,
+	// so give it room before escalating
 	if _, err := ipc.Send("stop"); err == nil {
-		for i := 0; i < 20; i++ {
-			time.Sleep(150 * time.Millisecond)
-			if !Running() {
-				return nil
-			}
+		if waitGone(15 * time.Second) {
+			return nil
 		}
 	}
-	pid, ok := pidIfAlive()
+	pid, ok := readPID()
 	if !ok {
 		return nil
 	}
 	_ = syscall.Kill(pid, syscall.SIGTERM)
-	for i := 0; i < 10; i++ {
-		time.Sleep(150 * time.Millisecond)
-		if !Running() {
-			return nil
-		}
+	if waitGone(10 * time.Second) {
+		return nil
 	}
 	_ = syscall.Kill(pid, syscall.SIGKILL)
-	time.Sleep(200 * time.Millisecond)
+	if !waitGone(2 * time.Second) {
+		return fmt.Errorf("daemon (PID %d) did not exit", pid)
+	}
+	// SIGKILL cannot run the daemon's own cleanup
+	_ = os.Remove(paths.DaemonPID())
+	_ = os.Remove(paths.DaemonSock())
 	return nil
+}
+
+func waitGone(within time.Duration) bool {
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		if !Running() {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return !Running()
 }
 
 func Reload() error {
@@ -236,13 +337,27 @@ func Reload() error {
 	return err
 }
 
+// Running reports whether a daemon holds the lock. Probing by taking the lock
+// and dropping it immediately means a crashed daemon is never mistaken for a
+// live one, and neither is an unrelated process that inherited its PID.
 func Running() bool {
-	_, ok := pidIfAlive()
-	return ok
+	if err := paths.EnsureDir(); err != nil {
+		return false
+	}
+	f, err := os.OpenFile(paths.DaemonLock(), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return true
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false
 }
 
 func PID() int {
-	pid, _ := pidIfAlive()
+	pid, _ := readPID()
 	return pid
 }
 
@@ -258,23 +373,20 @@ func ReadStatus() (Status, error) {
 	return st, nil
 }
 
-func pidIfAlive() (int, bool) {
+// readPID is for display and for signalling; liveness comes from the lock
+func readPID() (int, bool) {
 	raw, err := os.ReadFile(paths.DaemonPID())
 	if err != nil {
 		return 0, false
 	}
-	pid, err := strconv.Atoi(string(raw))
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
 	if err != nil || pid <= 0 {
-		return 0, false
-	}
-	if err := syscall.Kill(pid, 0); err != nil {
-		_ = os.Remove(paths.DaemonPID())
 		return 0, false
 	}
 	return pid, true
 }
 
-func syncSessions(ctx context.Context, st *store.Store, sessions map[string]*runtime, heal *healer, kick func()) {
+func syncSessions(ctx context.Context, st *store.Store, sessions *sessionSet, heal *healer, kick func()) {
 	cfg, _ := st.Config()
 	tz := cfg.Timezone
 	if tz == "" {
@@ -298,18 +410,18 @@ func syncSessions(ctx context.Context, st *store.Store, sessions map[string]*run
 		}
 	}
 
-	for id, rt := range sessions {
+	for id, rt := range sessions.list() {
 		ws, ok := want[id]
 		if !ok {
 			log.Printf("stopping %s", rt.sess.Name)
 			rt.cancel()
-			delete(sessions, id)
+			sessions.remove(id)
 			continue
 		}
 		if rt.sess.Xoxc != ws.Xoxc || rt.sess.Xoxd != ws.Xoxd {
 			log.Printf("tokens changed for %s", ws.Name)
 			rt.cancel()
-			delete(sessions, id)
+			sessions.remove(id)
 			continue
 		}
 		snap := rt.sess.Snapshot()
@@ -319,12 +431,12 @@ func syncSessions(ctx context.Context, st *store.Store, sessions map[string]*run
 		if !rt.sess.Running() || snap.Status == "error" {
 			log.Printf("restarting %s", ws.Name)
 			rt.cancel()
-			delete(sessions, id)
+			sessions.remove(id)
 		}
 	}
 
 	for id, ws := range want {
-		if _, ok := sessions[id]; ok {
+		if sessions.has(id) {
 			continue
 		}
 		startSession(ctx, st, sessions, heal, kick, ws)
@@ -371,28 +483,27 @@ func onTokenDead(st *store.Store, heal *healer, kick func(), teamID, name string
 	kick()
 }
 
-func startSession(parent context.Context, st *store.Store, sessions map[string]*runtime, heal *healer, kick func(), ws store.Workspace) {
+func startSession(parent context.Context, st *store.Store, sessions *sessionSet, heal *healer, kick func(), ws store.Workspace) {
 	log.Printf("starting %s", ws.Name)
 	ctx, cancel := context.WithCancel(parent)
 	sess := slackx.NewSession(ws.Name, ws.TeamID, ws.UserID, ws.Xoxc, ws.Xoxd)
 	sess.OnTokenDead = func(teamID, name string) {
 		onTokenDead(st, heal, kick, teamID, name)
 	}
-	sessions[ws.TeamID] = &runtime{cancel: cancel, sess: sess}
+	sessions.put(ws.TeamID, &runtime{cancel: cancel, sess: sess})
 	go sess.Run(ctx)
 }
 
-func stopAll(sessions map[string]*runtime) {
-	for id, rt := range sessions {
+func stopAll(sessions *sessionSet) {
+	for _, rt := range sessions.drain() {
 		rt.sess.Stop()
 		rt.cancel()
-		delete(sessions, id)
 	}
 }
 
-func snapshot(running bool, sessions map[string]*runtime) Status {
+func snapshot(running bool, sessions *sessionSet) Status {
 	out := Status{Running: running, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
-	for _, rt := range sessions {
+	for _, rt := range sessions.list() {
 		s := rt.sess.Snapshot()
 		item := WorkspaceStatus{
 			TeamID:     s.TeamID,
@@ -411,7 +522,7 @@ func snapshot(running bool, sessions map[string]*runtime) Status {
 	return out
 }
 
-func writeStatus(running bool, sessions map[string]*runtime) error {
+func writeStatus(running bool, sessions *sessionSet) error {
 	data, err := json.MarshalIndent(snapshot(running, sessions), "", "  ")
 	if err != nil {
 		return err
