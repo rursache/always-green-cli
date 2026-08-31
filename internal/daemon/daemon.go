@@ -16,13 +16,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rursache/always-green/internal/importws"
-	"github.com/rursache/always-green/internal/ipc"
-	"github.com/rursache/always-green/internal/notify"
-	"github.com/rursache/always-green/internal/paths"
-	"github.com/rursache/always-green/internal/schedule"
-	"github.com/rursache/always-green/internal/slackx"
-	"github.com/rursache/always-green/internal/store"
+	"github.com/rursache/always-green-cli/internal/importws"
+	"github.com/rursache/always-green-cli/internal/ipc"
+	"github.com/rursache/always-green-cli/internal/notify"
+	"github.com/rursache/always-green-cli/internal/paths"
+	"github.com/rursache/always-green-cli/internal/schedule"
+	"github.com/rursache/always-green-cli/internal/slackx"
+	"github.com/rursache/always-green-cli/internal/store"
 )
 
 type WorkspaceStatus struct {

@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rursache/always-green/internal/paths"
-	"github.com/rursache/always-green/internal/schedule"
+	"github.com/rursache/always-green-cli/internal/paths"
+	"github.com/rursache/always-green-cli/internal/schedule"
 )
 
 const (

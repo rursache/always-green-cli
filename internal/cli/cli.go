@@ -3,17 +3,29 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
-	"github.com/rursache/always-green/internal/bootstrap"
-	"github.com/rursache/always-green/internal/daemon"
-	"github.com/rursache/always-green/internal/importws"
-	"github.com/rursache/always-green/internal/paths"
-	"github.com/rursache/always-green/internal/store"
-	"github.com/rursache/always-green/internal/tui"
+	"github.com/rursache/always-green-cli/internal/bootstrap"
+	"github.com/rursache/always-green-cli/internal/daemon"
+	"github.com/rursache/always-green-cli/internal/importws"
+	"github.com/rursache/always-green-cli/internal/paths"
+	"github.com/rursache/always-green-cli/internal/store"
+	"github.com/rursache/always-green-cli/internal/tui"
 )
 
 var version = "1.0.0"
+
+// progName follows however the user invoked us, so help and hints read back
+// correctly whether they typed always-green-cli or the always-green alias
+func progName() string {
+	if len(os.Args) > 0 {
+		if base := filepath.Base(os.Args[0]); base != "" && base != "." && base != "/" {
+			return base
+		}
+	}
+	return "always-green-cli"
+}
 
 func Main() {
 	if len(os.Args) < 2 {
@@ -47,16 +59,17 @@ func Main() {
 	case "uninstall":
 		exit(uninstall())
 	default:
-		fmt.Fprintf(os.Stderr, "always-green: unknown command %q\n", os.Args[1])
-		fmt.Fprintln(os.Stderr, "Run always-green --help")
+		fmt.Fprintf(os.Stderr, "%s: unknown command %q\n", progName(), os.Args[1])
+		fmt.Fprintln(os.Stderr, "Run "+progName()+" --help")
 		os.Exit(1)
 	}
 }
 
 func printHelp() {
-	fmt.Print(`always-green ` + version + ` - keep your Slack presence active locally
+	name := progName()
+	fmt.Print(name + ` ` + version + ` - keep your Slack presence active locally
 
-Usage: always-green [command]
+Usage: ` + name + ` [command]
 
 Commands:
   (none)       Get tokens, stay green (always on)
@@ -92,9 +105,10 @@ func runDefault() error {
 	}
 	fmt.Println()
 	fmt.Println("You're green while this machine is on")
-	fmt.Println("  always-green status")
-	fmt.Println("  always-green tui      schedules / pause")
-	fmt.Println("  always-green stop     turn it off")
+	name := progName()
+	fmt.Println("  " + name + " status")
+	fmt.Println("  " + name + " tui      schedules / pause")
+	fmt.Println("  " + name + " stop     turn it off")
 	return nil
 }
 
@@ -266,7 +280,7 @@ func uninstall() error {
 	_ = daemon.Stop()
 	fmt.Println("Daemon stopped")
 	fmt.Println()
-	fmt.Println("always-green is a single binary: delete it from wherever you installed it")
+	fmt.Println(progName() + " is a single binary: delete it from wherever you installed it")
 	fmt.Println("Config is in " + paths.Dir())
 	fmt.Println("To wipe tokens and the daemon files:")
 	fmt.Println("  rm -rf " + paths.Dir())

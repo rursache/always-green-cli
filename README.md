@@ -7,13 +7,15 @@ Auth tokens stay local and private. Nothing is sent to a third-party service.
 ## Install
 
 ```bash
-brew tap rursache/tap && brew trust rursache/tap && brew install always-green
+brew tap rursache/tap && brew trust rursache/tap && brew install always-green-cli
 ```
+
+The binary is `always-green-cli`; `always-green` works too as an alias.
 
 ## Usage
 
 ```
-always-green
+always-green-cli
 ```
 
 On first run, pick how to add your session:
@@ -24,11 +26,11 @@ On first run, pick how to add your session:
 The daemon starts **always on**. Close the terminal; it keeps running.
 
 ```
-always-green status
-always-green stop
-always-green tui          # schedules, pause, add another workspace
-always-green reauth       # refresh tokens Slack has expired
-always-green snippet      # Chrome console helper for xoxc
+always-green-cli status
+always-green-cli stop
+always-green-cli tui          # schedules, pause, add another workspace
+always-green-cli reauth       # refresh tokens Slack has expired
+always-green-cli snippet      # Chrome console helper for xoxc
 ```
 
 ## When tokens expire
@@ -44,8 +46,8 @@ nothing. Workspaces from the **Slack desktop app** re-read the app. Workspaces
 
 You only get involved when the `d` cookie itself expires, which normally means
 you signed out, changed your password, or an admin ended the session. Then
-you get a desktop notification, `always-green status` exits non-zero, and the
-next `always-green` run walks you through pasting fresh tokens. `always-green
+you get a desktop notification, `always-green-cli status` exits non-zero, and the
+next `always-green-cli` run walks you through pasting fresh tokens. `always-green
 reauth` does the same on demand.
 
 ## Chrome tokens
@@ -53,7 +55,7 @@ reauth` does the same on demand.
 No extension.
 
 1. Open [app.slack.com](https://app.slack.com) and sign in
-2. DevTools → Console, paste `always-green snippet`, Enter (copies `xoxc`)
+2. DevTools → Console, paste `always-green-cli snippet`, Enter (copies `xoxc`)
 3. DevTools → Application → Cookies → `https://app.slack.com` → cookie `d` (starts with `xoxd-`)
 
 The `d` cookie is HttpOnly, so JavaScript cannot read it.

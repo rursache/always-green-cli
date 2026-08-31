@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rursache/always-green/internal/paths"
+	"github.com/rursache/always-green-cli/internal/paths"
 )
 
 // maxLine bounds a single request or response so a wedged peer cannot make us

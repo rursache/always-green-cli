@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rursache/always-green/internal/paths"
+	"github.com/rursache/always-green-cli/internal/paths"
 )
 
 // a unix socket path is capped near 104 bytes, so t.TempDir() is too deep

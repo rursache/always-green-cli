@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rursache/always-green/internal/paths"
+	"github.com/rursache/always-green-cli/internal/paths"
 )
 
 func tempStore(t *testing.T) *Store {

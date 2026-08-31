@@ -3,9 +3,9 @@ package importws
 import (
 	"fmt"
 
-	"github.com/rursache/always-green/internal/desktop"
-	"github.com/rursache/always-green/internal/slackx"
-	"github.com/rursache/always-green/internal/store"
+	"github.com/rursache/always-green-cli/internal/desktop"
+	"github.com/rursache/always-green-cli/internal/slackx"
+	"github.com/rursache/always-green-cli/internal/store"
 )
 
 type Result struct {

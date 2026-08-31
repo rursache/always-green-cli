@@ -38,17 +38,17 @@ jobs:
       - name: Build release binaries
         run: |
           VERSION="${{ steps.meta.outputs.version }}"
-          LDFLAGS="-s -w -X github.com/rursache/always-green/internal/cli.version=${VERSION}"
+          LDFLAGS="-s -w -X github.com/rursache/always-green-cli/internal/cli.version=${VERSION}"
           mkdir -p dist
           for pair in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
             os="${pair%/*}"
             arch="${pair#*/}"
-            out="dist/always-green-${os}-${arch}"
+            out="dist/always-green-cli-${os}-${arch}"
             echo "building $out"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-              go build -trimpath -ldflags="$LDFLAGS" -o "$out" ./cmd/always-green
+              go build -trimpath -ldflags="$LDFLAGS" -o "$out" ./cmd/always-green-cli
           done
-          (cd dist && shasum -a 256 always-green-* > checksums.txt)
+          (cd dist && shasum -a 256 always-green-cli-* > checksums.txt)
           ls -la dist
 
       - name: Upload artifacts to GitHub Release
@@ -56,10 +56,10 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           files: |
-            dist/always-green-darwin-arm64
-            dist/always-green-darwin-amd64
-            dist/always-green-linux-amd64
-            dist/always-green-linux-arm64
+            dist/always-green-cli-darwin-arm64
+            dist/always-green-cli-darwin-amd64
+            dist/always-green-cli-linux-amd64
+            dist/always-green-cli-linux-arm64
             dist/checksums.txt
 
       - name: Trigger Homebrew tap update
@@ -73,7 +73,7 @@ jobs:
               workflow_id: 'update-formula.yml',
               ref: 'master',
               inputs: {
-                formula: 'always-green',
+                formula: 'always-green-cli',
                 tag: '${{ steps.meta.outputs.tag }}',
                 repository: context.repo.owner + '/' + context.repo.repo
               }

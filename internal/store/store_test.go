@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rursache/always-green/internal/schedule"
+	"github.com/rursache/always-green-cli/internal/schedule"
 )
 
 func TestEligibleRejectsInvalidTokens(t *testing.T) {

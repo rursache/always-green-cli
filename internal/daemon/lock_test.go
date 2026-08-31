@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/rursache/always-green/internal/paths"
+	"github.com/rursache/always-green-cli/internal/paths"
 )
 
 func withTempHome(t *testing.T) {
