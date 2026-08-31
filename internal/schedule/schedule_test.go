@@ -7,9 +7,9 @@ import (
 
 func TestParseClock(t *testing.T) {
 	cases := []struct {
-		in      string
-		h, m    int
-		wantOK  bool
+		in     string
+		h, m   int
+		wantOK bool
 	}{
 		{"9am", 9, 0, true},
 		{"9:30", 9, 30, true},
@@ -101,5 +101,55 @@ func TestNudgeClock(t *testing.T) {
 	}
 	if got := NudgeClock("11:45 PM", 30); got != "12:15 AM" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// A negative hour used to be folded into a legal one by the pm shift, so a
+// corrupt schedule string was accepted as a real time instead of rejected
+func TestParseClockRejectsNegativeAndOutOfRange(t *testing.T) {
+	for _, in := range []string{
+		"-1:30pm", "-12:00pm", "-13:00pm", "-1", "-1:00",
+		"13am", "18am", "0pm", "13pm", "24:00", "25", "9:60", "9:-5",
+		"", "   ", "abc", "9:00:00", "::", "9:",
+	} {
+		if h, m, ok := ParseClock(in); ok {
+			t.Errorf("ParseClock(%q) accepted as %02d:%02d, want rejected", in, h, m)
+		}
+	}
+}
+
+func TestParseClockAccepts(t *testing.T) {
+	for _, tc := range []struct {
+		in    string
+		wantH int
+		wantM int
+	}{
+		{"9", 9, 0},
+		{"09:30", 9, 30},
+		{"9:00 AM", 9, 0},
+		{"12am", 0, 0},
+		{"12:30am", 0, 30},
+		{"12pm", 12, 0},
+		{"12:30pm", 12, 30},
+		{"5pm", 17, 0},
+		{"5:45 p", 17, 45},
+		{"0:00", 0, 0},
+		{"23:59", 23, 59},
+		{"  7:05  ", 7, 5},
+	} {
+		h, m, ok := ParseClock(tc.in)
+		if !ok || h != tc.wantH || m != tc.wantM {
+			t.Errorf("ParseClock(%q) = %02d:%02d ok=%v, want %02d:%02d", tc.in, h, m, ok, tc.wantH, tc.wantM)
+		}
+	}
+}
+
+func TestDetectTimezoneReturnsLoadableZone(t *testing.T) {
+	tz := DetectTimezone()
+	if tz == "" {
+		t.Fatal("timezone must never be empty")
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		t.Fatalf("DetectTimezone returned %q which does not load: %v", tz, err)
 	}
 }

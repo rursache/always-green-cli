@@ -65,12 +65,22 @@ func ParseClock(text string) (hour, minute int, ok bool) {
 		}
 	}
 
-	if pm && h < 12 {
-		h += 12
-	} else if am && h == 12 {
-		h = 0
+	// validate before the am/pm shift: afterwards a negative hour would have
+	// been folded into a legal-looking one ("-1:30pm" reading as 11:30)
+	if m < 0 || m > 59 {
+		return 0, 0, false
 	}
-	if h < 0 || h > 23 || m < 0 || m > 59 {
+	if am || pm {
+		if h < 1 || h > 12 {
+			return 0, 0, false
+		}
+		if pm && h < 12 {
+			h += 12
+		} else if am && h == 12 {
+			h = 0
+		}
+	}
+	if h < 0 || h > 23 {
 		return 0, 0, false
 	}
 	return h, m, true
@@ -105,12 +115,8 @@ func NudgeClock(text string, deltaMinutes int) string {
 }
 
 func DetectTimezone() string {
-	name, err := time.Now().Zone()
-	_ = name
-	if loc := time.Local; loc != nil && loc != time.UTC {
-		if loc.String() != "Local" {
-			return loc.String()
-		}
+	if loc := time.Local; loc != nil && loc != time.UTC && loc.String() != "Local" {
+		return loc.String()
 	}
 	if link, err := os.Readlink("/etc/localtime"); err == nil {
 		if i := strings.Index(link, "zoneinfo/"); i >= 0 {
@@ -120,7 +126,6 @@ func DetectTimezone() string {
 			}
 		}
 	}
-	_ = err
 	return "UTC"
 }
 
