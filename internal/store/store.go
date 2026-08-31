@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/rursache/always-green/internal/paths"
@@ -58,6 +60,23 @@ type Store struct {
 	key []byte
 }
 
+// withFileLock serialises a read-modify-write across processes. The daemon and
+// every CLI/TUI invocation open their own Store, so the in-process mutex alone
+// let two of them read the same state, each apply a change, and the last write
+// win - silently dropping the other's edit.
+func withFileLock(fn func() error) error {
+	f, err := os.OpenFile(paths.StoreLock(), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
+}
+
 func Open() (*Store, error) {
 	if err := paths.EnsureDir(); err != nil {
 		return nil, err
@@ -83,7 +102,9 @@ func (s *Store) Config() (Config, error) {
 func (s *Store) SaveConfig(cfg Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.write(paths.ConfigFile(), cfg)
+	return withFileLock(func() error {
+		return s.write(paths.ConfigFile(), cfg)
+	})
 }
 
 func (s *Store) Workspaces() ([]Workspace, error) {
@@ -100,6 +121,10 @@ func (s *Store) Workspaces() ([]Workspace, error) {
 func (s *Store) SaveWorkspace(ws Workspace) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return withFileLock(func() error { return s.saveWorkspace(ws) })
+}
+
+func (s *Store) saveWorkspace(ws Workspace) error {
 	var file workspaceFile
 	_, err := s.read(paths.WorkspacesFile(), &file)
 	if err != nil {
@@ -140,6 +165,10 @@ func (s *Store) SaveWorkspace(ws Workspace) error {
 func (s *Store) UpdateWorkspace(teamID string, fn func(*Workspace)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return withFileLock(func() error { return s.updateWorkspace(teamID, fn) })
+}
+
+func (s *Store) updateWorkspace(teamID string, fn func(*Workspace)) error {
 	var file workspaceFile
 	ok, err := s.read(paths.WorkspacesFile(), &file)
 	if err != nil {
@@ -161,6 +190,10 @@ func (s *Store) UpdateWorkspace(teamID string, fn func(*Workspace)) error {
 func (s *Store) RemoveWorkspace(teamID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return withFileLock(func() error { return s.removeWorkspace(teamID) })
+}
+
+func (s *Store) removeWorkspace(teamID string) error {
 	var file workspaceFile
 	ok, err := s.read(paths.WorkspacesFile(), &file)
 	if err != nil || !ok {
@@ -179,7 +212,11 @@ func (s *Store) RemoveWorkspace(teamID string) error {
 func (s *Store) ClearWorkspaces() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return os.Remove(paths.WorkspacesFile())
+	// already-absent satisfies the postcondition
+	if err := os.Remove(paths.WorkspacesFile()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func (ws Workspace) KeepOnlineActive(now time.Time) bool {
@@ -235,6 +272,13 @@ func loadOrCreateKey() ([]byte, error) {
 		if len(data) != 32 {
 			return nil, errors.New("master.key is the wrong size")
 		}
+		// this key decrypts the Slack tokens; refuse to use one that other
+		// local accounts can read rather than carrying on silently
+		if st, statErr := os.Stat(path); statErr == nil && st.Mode().Perm()&0o077 != 0 {
+			if chmodErr := os.Chmod(path, 0o600); chmodErr != nil {
+				return nil, fmt.Errorf("%s is readable by other users and could not be tightened: %w", path, chmodErr)
+			}
+		}
 		return data, nil
 	}
 	if !os.IsNotExist(err) {
@@ -244,7 +288,7 @@ func loadOrCreateKey() ([]byte, error) {
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(path, key, 0o600); err != nil {
+	if err := writeFileSync(path, key, 0o600); err != nil {
 		return nil, err
 	}
 	return key, nil
@@ -278,10 +322,42 @@ func (s *Store) write(path string, v any) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, enc, 0o600); err != nil {
+	if err := writeFileSync(tmp, enc, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+// writeFileSync flushes to disk before returning, so a crash right after a
+// save cannot leave the renamed file empty or holding stale cached content
+func writeFileSync(path string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// syncDir persists the rename itself
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func (s *Store) encrypt(plain []byte) ([]byte, error) {

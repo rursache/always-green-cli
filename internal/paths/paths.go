@@ -15,6 +15,7 @@ func WorkspacesFile() string { return filepath.Join(Dir(), "workspaces.json.enc"
 func StatusFile() string     { return filepath.Join(Dir(), "status.json") }
 func DaemonPID() string      { return filepath.Join(Dir(), "daemon.pid") }
 func DaemonLock() string     { return filepath.Join(Dir(), "daemon.lock") }
+func StoreLock() string      { return filepath.Join(Dir(), "store.lock") }
 func DaemonSock() string     { return filepath.Join(Dir(), "daemon.sock") }
 func DaemonLog() string      { return filepath.Join(Dir(), "daemon.log") }
 
