@@ -46,6 +46,7 @@ func tokensFromLevelDB(dir string) (map[string]teamEntry, error) {
 	defer db.Close()
 
 	out := map[string]teamEntry{}
+	var loose []string
 	iter := db.NewIterator(nil, nil)
 	defer iter.Release()
 	for iter.Next() {
@@ -61,20 +62,24 @@ func tokensFromLevelDB(dir string) (map[string]teamEntry, error) {
 				}
 			}
 		}
-		for _, tok := range xoxcRe.FindAllString(val, -1) {
-			if !looksLikeXoxc(tok) {
-				continue
-			}
-			if _, exists := out[tok]; exists {
-				continue
-			}
-			// token-only fallback, team id filled later via auth.test
-			if !hasToken(out, tok) {
-				out[tok] = teamEntry{Token: tok}
-			}
-		}
+		loose = append(loose, xoxcRe.FindAllString(val, -1)...)
 	}
+	// merged only after the whole scan: a token found loose in some other
+	// record must not shadow the same token's real team entry just because
+	// the iterator reached it first
+	mergeLooseTokens(out, loose)
 	return out, iter.Error()
+}
+
+// mergeLooseTokens adds tokens that no team entry already claims, keyed by the
+// token itself; the team id is resolved later via auth.test
+func mergeLooseTokens(out map[string]teamEntry, loose []string) {
+	for _, tok := range loose {
+		if !looksLikeXoxc(tok) || hasToken(out, tok) {
+			continue
+		}
+		out[tok] = teamEntry{Token: tok}
+	}
 }
 
 func tokensFromRawScan(dir string) (map[string]teamEntry, error) {

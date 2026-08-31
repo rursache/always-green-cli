@@ -54,3 +54,29 @@ func encryptV10(t *testing.T, plain, password []byte, rounds int) []byte {
 	cipher.NewCBCEncrypter(block, iv).CryptBlocks(out, src)
 	return append([]byte("v10"), out...)
 }
+
+// With two Slack installs the keychain holds two Safe Storage items; the
+// first one found may belong to the other profile, so the wrong password must
+// simply fail rather than be treated as authoritative
+func TestDecryptCookieRejectsWrongPassword(t *testing.T) {
+	enc := encryptV10(t, []byte("xoxd-hello-cookie-value"), []byte("right-password"), 1003)
+	if _, err := decryptCookie(enc, []byte("wrong-password"), 1003); err == nil {
+		t.Fatal("a wrong password must not decrypt")
+	}
+	got, err := decryptCookie(enc, []byte("right-password"), 1003)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "xoxd-hello-cookie-value" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestDecryptCookieRejectsUnknownPrefix(t *testing.T) {
+	if _, err := decryptCookie([]byte("v99somethingelse"), []byte("pw"), 1003); err == nil {
+		t.Fatal("an unknown prefix must be rejected")
+	}
+	if _, err := decryptCookie([]byte("ab"), []byte("pw"), 1003); err == nil {
+		t.Fatal("a truncated blob must be rejected")
+	}
+}

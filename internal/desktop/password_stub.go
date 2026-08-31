@@ -4,7 +4,7 @@ package desktop
 
 import "errors"
 
-func safeStoragePassword() ([]byte, error) {
+func safeStoragePasswords() ([][]byte, error) {
 	return nil, errors.New("Slack desktop import is not supported on this OS")
 }
 

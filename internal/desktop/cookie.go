@@ -40,17 +40,21 @@ func readDCookie(dbPath string) (string, error) {
 	if len(enc) == 0 {
 		return "", errors.New("Slack d cookie is empty")
 	}
-	password, err := safeStoragePassword()
+	passwords, err := safeStoragePasswords()
 	if err != nil {
 		return "", err
 	}
-	dec, err := decryptCookie(enc, password, cookieRounds())
-	if err != nil {
-		return "", err
+	// try each keychain candidate: only a successful decrypt identifies the
+	// one that belongs to this Slack install
+	for _, password := range passwords {
+		dec, err := decryptCookie(enc, password, cookieRounds())
+		if err != nil {
+			continue
+		}
+		val := strings.TrimSpace(string(dec))
+		if strings.HasPrefix(val, "xoxd-") {
+			return val, nil
+		}
 	}
-	val := strings.TrimSpace(string(dec))
-	if !strings.HasPrefix(val, "xoxd-") {
-		return "", errors.New("decrypted cookie is not an xoxd token")
-	}
-	return val, nil
+	return "", errDecrypt
 }

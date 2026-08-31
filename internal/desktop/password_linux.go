@@ -2,8 +2,8 @@
 
 package desktop
 
-func safeStoragePassword() ([]byte, error) {
-	return []byte("peanuts"), nil
+func safeStoragePasswords() ([][]byte, error) {
+	return [][]byte{[]byte("peanuts")}, nil
 }
 
 func cookieRounds() int { return 1 }

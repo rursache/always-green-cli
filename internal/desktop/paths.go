@@ -7,9 +7,9 @@ import (
 )
 
 type Profile struct {
-	Root     string
-	Cookies  string
-	LevelDB  string
+	Root      string
+	Cookies   string
+	LevelDB   string
 	RootState string
 }
 
