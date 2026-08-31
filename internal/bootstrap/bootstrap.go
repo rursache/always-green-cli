@@ -26,6 +26,70 @@ func Ensure(st *store.Store, out io.Writer) error {
 	return firstRun(st, out)
 }
 
+// EnsureValid walks the user through re-auth for any workspace whose tokens
+// Slack has rejected. Desktop-imported workspaces heal themselves in the
+// daemon, so anything still flagged here needs a human paste.
+func EnsureValid(st *store.Store, out io.Writer) error {
+	list, err := st.Workspaces()
+	if err != nil {
+		return err
+	}
+	var dead []store.Workspace
+	for _, ws := range list {
+		if ws.TokenInvalid {
+			dead = append(dead, ws)
+		}
+	}
+	if len(dead) == 0 {
+		return nil
+	}
+	fmt.Fprintln(out)
+	for _, ws := range dead {
+		fmt.Fprintf(out, "Slack expired the tokens for %s\n", ws.Name)
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return fmt.Errorf("run always-green reauth in a terminal to paste fresh tokens")
+	}
+	return Reauth(st, out, false)
+}
+
+// Reauth re-reads tokens: straight from the Slack app when that is where they
+// came from, otherwise a manual Chrome paste. With force it refreshes every
+// workspace, not just the ones Slack has already rejected.
+func Reauth(st *store.Store, out io.Writer, force bool) error {
+	list, err := st.Workspaces()
+	if err != nil {
+		return err
+	}
+	if len(list) == 0 {
+		return Ensure(st, out)
+	}
+	remaining := 0
+	for _, ws := range list {
+		if !ws.TokenInvalid && !force {
+			continue
+		}
+		if ws.Source != store.SourceDesktop {
+			remaining++
+			continue
+		}
+		fmt.Fprintf(out, "Re-reading %s from the Slack app...\n", ws.Name)
+		if err := importws.RefreshDesktop(st, ws.TeamID); err != nil {
+			fmt.Fprintf(out, "  could not read it (%v), paste tokens instead\n", err)
+			remaining++
+			continue
+		}
+		fmt.Fprintf(out, "  refreshed %s\n", ws.Name)
+	}
+	if remaining == 0 {
+		return nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return fmt.Errorf("run always-green reauth in a terminal to paste fresh tokens")
+	}
+	return fromChrome(st, out, bufio.NewReader(os.Stdin))
+}
+
 func firstRun(st *store.Store, out io.Writer) error {
 	fmt.Fprintln(out, "First run: we need your Slack session tokens")
 	fmt.Fprintln(out)
@@ -92,7 +156,7 @@ func fromChrome(st *store.Store, out io.Writer, in *bufio.Reader) error {
 		return err
 	}
 	if c, d, ok := maybeBlob(first); ok {
-		res, err := importws.Save(st, desktop.Found{Xoxc: c, Xoxd: d})
+		res, err := importws.Save(st, desktop.Found{Xoxc: c, Xoxd: d}, store.SourcePaste)
 		if err != nil {
 			return err
 		}
@@ -113,7 +177,7 @@ func fromChrome(st *store.Store, out io.Writer, in *bufio.Reader) error {
 	}
 	var n int
 	for _, xoxc := range tokens {
-		res, err := importws.Save(st, desktop.Found{Xoxc: xoxc, Xoxd: xoxd})
+		res, err := importws.Save(st, desktop.Found{Xoxc: xoxc, Xoxd: xoxd}, store.SourcePaste)
 		if err != nil {
 			fmt.Fprintf(out, "  skip: %v\n", err)
 			continue
@@ -162,7 +226,7 @@ func importAll(st *store.Store, out io.Writer) (int, error) {
 	}
 	var n int
 	for _, f := range found {
-		res, err := importws.Save(st, f)
+		res, err := importws.Save(st, f, store.SourceDesktop)
 		if err != nil {
 			fmt.Fprintf(out, "  skip: %v\n", err)
 			continue

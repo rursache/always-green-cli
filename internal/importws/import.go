@@ -14,11 +14,15 @@ type Result struct {
 	Added  bool
 }
 
-func Save(st *store.Store, f desktop.Found) (Result, error) {
+func Save(st *store.Store, f desktop.Found, source string) (Result, error) {
 	auth, err := slackx.AuthTest(f.Xoxc, f.Xoxd)
 	if err != nil {
 		return Result{}, fmt.Errorf("Slack rejected these tokens: %w", err)
 	}
+	return save(st, f, auth, source)
+}
+
+func save(st *store.Store, f desktop.Found, auth slackx.Auth, source string) (Result, error) {
 	name := f.Name
 	if name == "" {
 		name = auth.Team
@@ -41,6 +45,7 @@ func Save(st *store.Store, f desktop.Found) (Result, error) {
 		UserID: auth.UserID,
 		Xoxc:   f.Xoxc,
 		Xoxd:   f.Xoxd,
+		Source: source,
 		UserInfo: &store.UserInfo{
 			Name: profile.Name, RealName: profile.RealName,
 			DisplayName: profile.DisplayName, Email: profile.Email,
@@ -50,6 +55,28 @@ func Save(st *store.Store, f desktop.Found) (Result, error) {
 		return Result{}, err
 	}
 	return Result{Name: name, TeamID: auth.TeamID, Added: added}, nil
+}
+
+// RefreshDesktop re-reads one workspace's tokens from the Slack desktop app.
+// Only the entry Slack itself confirms belongs to teamID is saved, so a stale
+// or unrelated profile cannot overwrite the wrong workspace.
+func RefreshDesktop(st *store.Store, teamID string) error {
+	found, err := desktop.Discover()
+	if err != nil {
+		return err
+	}
+	for _, f := range found {
+		if f.TeamID != "" && f.TeamID != teamID {
+			continue
+		}
+		auth, err := slackx.AuthTest(f.Xoxc, f.Xoxd)
+		if err != nil || auth.TeamID != teamID {
+			continue
+		}
+		_, err = save(st, f, auth, store.SourceDesktop)
+		return err
+	}
+	return fmt.Errorf("the Slack app has no working tokens for this workspace")
 }
 
 func Discover() ([]desktop.Found, error) {

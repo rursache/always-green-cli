@@ -343,7 +343,7 @@ func (m model) submitImport() (tea.Model, tea.Cmd) {
 		if !m.impPick[i] {
 			continue
 		}
-		if _, err := importws.Save(m.store, f); err != nil {
+		if _, err := importws.Save(m.store, f, store.SourceDesktop); err != nil {
 			m.err = err.Error()
 			return m, nil
 		}
@@ -421,6 +421,7 @@ func (m model) submitAdd() (tea.Model, tea.Cmd) {
 		UserID: auth.UserID,
 		Xoxc:   xoxc,
 		Xoxd:   xoxd,
+		Source: store.SourcePaste,
 		UserInfo: &store.UserInfo{
 			Name: profile.Name, RealName: profile.RealName,
 			DisplayName: profile.DisplayName, Email: profile.Email,
@@ -632,13 +633,13 @@ func (m model) selected() (store.Workspace, bool) {
 }
 
 var (
-	titleStyle  = lipgloss.NewStyle().Bold(true)
-	okStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	warnStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	selStyle    = lipgloss.NewStyle().Background(lipgloss.Color("236"))
-	cyanStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	titleStyle = lipgloss.NewStyle().Bold(true)
+	okStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	warnStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	errStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	selStyle   = lipgloss.NewStyle().Background(lipgloss.Color("236"))
+	cyanStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 )
 
 func (m model) View() string {
@@ -753,8 +754,8 @@ func (m model) renderWS(ws store.Workspace, dws daemon.WorkspaceStatus, now time
 }
 
 func badgeOf(ws store.Workspace, dws daemon.WorkspaceStatus, now time.Time, tz string) (string, lipgloss.Style) {
-	if !dws.TokenValid && dws.TeamID != "" {
-		return "Invalid", errStyle
+	if ws.TokenInvalid || (!dws.TokenValid && dws.TeamID != "") {
+		return "Expired", errStyle
 	}
 	if ws.KeepOnlineActive(now) {
 		return "Stay online", cyanStyle
@@ -769,8 +770,8 @@ func badgeOf(ws store.Workspace, dws daemon.WorkspaceStatus, now time.Time, tz s
 }
 
 func statusOf(ws store.Workspace, dws daemon.WorkspaceStatus, p slackx.Presence, now time.Time, tz string) (string, lipgloss.Style) {
-	if p.Presence == "invalid" || (!dws.TokenValid && dws.TeamID != "") {
-		return "tokens expired, re-add this workspace", errStyle
+	if ws.TokenInvalid || p.Presence == "invalid" || (!dws.TokenValid && dws.TeamID != "") {
+		return "tokens expired, quit and run: always-green reauth", errStyle
 	}
 	if ws.KeepOnlineActive(now) {
 		until, _ := time.Parse(time.RFC3339, ws.KeepOnlineUntil)
@@ -861,13 +862,13 @@ func (m model) viewSchedule() string {
 		days = append(days, fmt.Sprintf("%d[%s]%s", i+1, mark, schedule.DayShort[id]))
 	}
 	return strings.Join([]string{
-		titleStyle.Render("Schedule: "+m.schedName),
-		dimStyle.Render("timezone "+m.tz+"   w weekdays   e every day   1-7 toggle   Ctrl+a always on"),
+		titleStyle.Render("Schedule: " + m.schedName),
+		dimStyle.Render("timezone " + m.tz + "   w weekdays   e every day   1-7 toggle   Ctrl+a always on"),
 		"",
 		strings.Join(days, "  "),
 		"",
-		"Start  "+m.startIn.View(),
-		"End    "+m.endIn.View(),
+		"Start  " + m.startIn.View(),
+		"End    " + m.endIn.View(),
 		"",
 		"Left/Right nudge 30m   Enter save   Esc skip",
 	}, "\n")

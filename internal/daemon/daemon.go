@@ -10,10 +10,13 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/rursache/always-green/internal/importws"
 	"github.com/rursache/always-green/internal/ipc"
+	"github.com/rursache/always-green/internal/notify"
 	"github.com/rursache/always-green/internal/paths"
 	"github.com/rursache/always-green/internal/schedule"
 	"github.com/rursache/always-green/internal/slackx"
@@ -32,14 +35,50 @@ type WorkspaceStatus struct {
 }
 
 type Status struct {
-	Running    bool               `json:"running"`
+	Running    bool              `json:"running"`
 	Workspaces []WorkspaceStatus `json:"workspaces"`
-	UpdatedAt  string             `json:"updated_at"`
+	UpdatedAt  string            `json:"updated_at"`
 }
 
 type runtime struct {
 	cancel context.CancelFunc
 	sess   *slackx.Session
+}
+
+// desktopRetryEvery bounds how often a self-healing workspace re-reads the
+// Slack app, since on macOS that can mean a Keychain round trip
+const desktopRetryEvery = 30 * time.Minute
+
+// healer tracks in-flight and recent desktop refresh attempts. Attempts run off
+// the main loop because reading the Keychain can block for a long time.
+type healer struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+	busy map[string]bool
+}
+
+func newHealer() *healer {
+	return &healer{last: map[string]time.Time{}, busy: map[string]bool{}}
+}
+
+func (h *healer) claim(teamID string, now time.Time) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.busy[teamID] {
+		return false
+	}
+	if at, ok := h.last[teamID]; ok && now.Sub(at) < desktopRetryEvery {
+		return false
+	}
+	h.last[teamID] = now
+	h.busy[teamID] = true
+	return true
+}
+
+func (h *healer) release(teamID string) {
+	h.mu.Lock()
+	delete(h.busy, teamID)
+	h.mu.Unlock()
 }
 
 func RunForeground() error {
@@ -69,6 +108,7 @@ func RunForeground() error {
 	defer cancel()
 
 	sessions := map[string]*runtime{}
+	heal := newHealer()
 	reload := make(chan struct{}, 1)
 	kick := func() {
 		select {
@@ -105,7 +145,7 @@ func RunForeground() error {
 	}()
 
 	log.Printf("daemon starting")
-	syncSessions(ctx, st, sessions)
+	syncSessions(ctx, st, sessions, heal, kick)
 	_ = writeStatus(true, sessions)
 
 	tick := time.NewTicker(5 * time.Second)
@@ -121,9 +161,9 @@ func RunForeground() error {
 			log.Printf("daemon stopped")
 			return nil
 		case <-reload:
-			syncSessions(ctx, st, sessions)
+			syncSessions(ctx, st, sessions, heal, kick)
 		case <-sched.C:
-			syncSessions(ctx, st, sessions)
+			syncSessions(ctx, st, sessions, heal, kick)
 		case <-tick.C:
 			_ = writeStatus(true, sessions)
 		}
@@ -234,7 +274,7 @@ func pidIfAlive() (int, bool) {
 	return pid, true
 }
 
-func syncSessions(ctx context.Context, st *store.Store, sessions map[string]*runtime) {
+func syncSessions(ctx context.Context, st *store.Store, sessions map[string]*runtime, heal *healer, kick func()) {
 	cfg, _ := st.Config()
 	tz := cfg.Timezone
 	if tz == "" {
@@ -248,6 +288,11 @@ func syncSessions(ctx context.Context, st *store.Store, sessions map[string]*run
 	now := time.Now()
 	want := map[string]store.Workspace{}
 	for _, ws := range list {
+		// a workspace imported from the Slack app can fix itself: the app keeps
+		// rotating its own tokens, so re-read them instead of nagging the user
+		if ws.TokenInvalid && ws.Source == store.SourceDesktop {
+			tryDesktopHeal(st, heal, kick, ws, now)
+		}
 		if ws.Eligible(now, tz) {
 			want[ws.TeamID] = ws
 		}
@@ -282,14 +327,57 @@ func syncSessions(ctx context.Context, st *store.Store, sessions map[string]*run
 		if _, ok := sessions[id]; ok {
 			continue
 		}
-		startSession(ctx, sessions, ws)
+		startSession(ctx, st, sessions, heal, kick, ws)
 	}
 }
 
-func startSession(parent context.Context, sessions map[string]*runtime, ws store.Workspace) {
+func tryDesktopHeal(st *store.Store, heal *healer, kick func(), ws store.Workspace, now time.Time) {
+	if !heal.claim(ws.TeamID, now) {
+		return
+	}
+	name, teamID := ws.Name, ws.TeamID
+	go func() {
+		defer heal.release(teamID)
+		if err := importws.RefreshDesktop(st, teamID); err != nil {
+			log.Printf("[%s] desktop refresh failed: %v", name, err)
+			return
+		}
+		log.Printf("[%s] refreshed tokens from the Slack app", name)
+		kick()
+	}()
+}
+
+// onTokenDead is called from a session goroutine once Slack rejects the tokens
+func onTokenDead(st *store.Store, heal *healer, kick func(), teamID, name string) {
+	// share the throttle with the periodic retry so tokens that keep passing
+	// auth.test but keep failing the websocket cannot spin the Slack app
+	ws, ok := st.Workspace(teamID)
+	fromDesktop := ok && ws.Source == store.SourceDesktop
+	if fromDesktop && heal.claim(teamID, time.Now()) {
+		err := importws.RefreshDesktop(st, teamID)
+		heal.release(teamID)
+		if err == nil {
+			log.Printf("[%s] tokens expired, refreshed from the Slack app", name)
+			kick()
+			return
+		}
+		log.Printf("[%s] desktop refresh failed: %v", name, err)
+	}
+	if err := st.MarkTokenInvalid(teamID); err != nil {
+		log.Printf("[%s] could not flag expired tokens: %v", name, err)
+	}
+	log.Printf("[%s] tokens expired, run: always-green reauth", name)
+	notify.TokenExpired(name, fromDesktop)
+	kick()
+}
+
+func startSession(parent context.Context, st *store.Store, sessions map[string]*runtime, heal *healer, kick func(), ws store.Workspace) {
 	log.Printf("starting %s", ws.Name)
 	ctx, cancel := context.WithCancel(parent)
 	sess := slackx.NewSession(ws.Name, ws.TeamID, ws.UserID, ws.Xoxc, ws.Xoxd)
+	sess.OnTokenDead = func(teamID, name string) {
+		onTokenDead(st, heal, kick, teamID, name)
+	}
 	sessions[ws.TeamID] = &runtime{cancel: cancel, sess: sess}
 	go sess.Run(ctx)
 }

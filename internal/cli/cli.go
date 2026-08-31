@@ -28,7 +28,7 @@ func Main() {
 	case "snippet":
 		fmt.Println(bootstrap.ChromeSnippet)
 	case "start":
-		exit(start())
+		exit(startCmd())
 	case "stop":
 		exit(stop())
 	case "status":
@@ -40,6 +40,8 @@ func Main() {
 		}
 	case "import":
 		exit(importDesktop())
+	case "reauth", "relogin":
+		exit(reauth())
 	case "tui", "ui":
 		exit(tui.Run())
 	case "uninstall":
@@ -63,6 +65,7 @@ Commands:
   status       Show daemon and workspace state
   tui          Open the dashboard (schedules, pause, add)
   snippet      Print the Chrome console snippet (xoxc only)
+  reauth       Refresh tokens Slack has expired
   import       Re-read workspaces from the Slack desktop app (Keychain)
   uninstall    Stop the daemon and print cleanup hints
   daemon       Run the daemon in the foreground (used internally)
@@ -81,6 +84,9 @@ func runDefault() error {
 	if err := bootstrap.Ensure(st, os.Stdout); err != nil {
 		return err
 	}
+	if err := bootstrap.EnsureValid(st, os.Stdout); err != nil {
+		return err
+	}
 	if err := start(); err != nil {
 		return err
 	}
@@ -92,9 +98,53 @@ func runDefault() error {
 	return nil
 }
 
+func startCmd() error {
+	st, err := store.Open()
+	if err != nil {
+		return err
+	}
+	if err := bootstrap.EnsureValid(st, os.Stdout); err != nil {
+		return err
+	}
+	return start()
+}
+
+func reauth() error {
+	st, err := store.Open()
+	if err != nil {
+		return err
+	}
+	list, err := st.Workspaces()
+	if err != nil {
+		return err
+	}
+	flagged := false
+	for _, ws := range list {
+		if ws.TokenInvalid {
+			flagged = true
+			break
+		}
+	}
+	if !flagged {
+		fmt.Println("No workspace is flagged as expired, refreshing anyway")
+	}
+	// nothing flagged means the user is refreshing pre-emptively, so do them all
+	if err := bootstrap.Reauth(st, os.Stdout, !flagged); err != nil {
+		return err
+	}
+	if daemon.Running() {
+		_ = daemon.Reload()
+	} else if err := start(); err != nil {
+		return err
+	}
+	fmt.Println("Back to green")
+	return nil
+}
+
 func start() error {
 	if daemon.Running() {
 		fmt.Println("Daemon is already running")
+		_ = daemon.Reload()
 		return nil
 	}
 	fmt.Println("Starting daemon...")
@@ -142,20 +192,27 @@ func status() error {
 		return nil
 	}
 	fmt.Printf("\nWorkspaces (%d):\n", len(list))
+	needsReauth := false
 	for _, ws := range list {
 		state := "idle"
-		if dws, ok := byTeam[ws.TeamID]; ok {
-			if !dws.TokenValid {
-				state = "invalid tokens (re-add workspace)"
-			} else if dws.Connected {
-				state = "connected"
-			} else {
-				state = dws.Status
-			}
-		} else if ws.Paused {
+		dws, live := byTeam[ws.TeamID]
+		switch {
+		case ws.TokenInvalid || (live && !dws.TokenValid):
+			state = "tokens expired, run: always-green reauth"
+			needsReauth = true
+		case ws.Paused:
 			state = "paused"
+		case live && dws.Connected:
+			state = "connected"
+		case live:
+			state = dws.Status
 		}
 		fmt.Printf("  %s: %s\n", ws.Name, state)
+	}
+	if needsReauth {
+		fmt.Println()
+		fmt.Println("Run: always-green reauth")
+		os.Exit(1)
 	}
 	return nil
 }
@@ -176,7 +233,7 @@ func importDesktop() error {
 	}
 	var added, refreshed int
 	for _, f := range found {
-		res, err := importws.Save(st, f)
+		res, err := importws.Save(st, f, store.SourceDesktop)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  skip: %v\n", err)
 			continue

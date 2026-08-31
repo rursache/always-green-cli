@@ -16,6 +16,11 @@ import (
 	"github.com/rursache/always-green/internal/schedule"
 )
 
+const (
+	SourceDesktop = "desktop"
+	SourcePaste   = "paste"
+)
+
 type Config struct {
 	Timezone string `json:"timezone,omitempty"`
 }
@@ -34,6 +39,9 @@ type Workspace struct {
 	Xoxc            string           `json:"xoxc"`
 	Xoxd            string           `json:"xoxd"`
 	Paused          bool             `json:"is_paused"`
+	Source          string           `json:"source,omitempty"`
+	TokenInvalid    bool             `json:"token_invalid,omitempty"`
+	TokenInvalidAt  string           `json:"token_invalid_at,omitempty"`
 	UserInfo        *UserInfo        `json:"user_info,omitempty"`
 	Schedule        *schedule.Window `json:"schedule,omitempty"`
 	KeepOnlineUntil string           `json:"keep_online_until,omitempty"`
@@ -111,6 +119,9 @@ func (s *Store) SaveWorkspace(ws Workspace) error {
 			if ws.KeepOnlineUntil == "" {
 				ws.KeepOnlineUntil = existing.KeepOnlineUntil
 			}
+			if ws.Source == "" {
+				ws.Source = existing.Source
+			}
 			ws.Paused = existing.Paused
 			file.Workspaces[i] = ws
 			found = true
@@ -183,6 +194,9 @@ func (ws Workspace) KeepOnlineActive(now time.Time) bool {
 }
 
 func (ws Workspace) Eligible(now time.Time, tz string) bool {
+	if ws.TokenInvalid {
+		return false
+	}
 	if ws.KeepOnlineActive(now) {
 		return true
 	}
@@ -190,6 +204,28 @@ func (ws Workspace) Eligible(now time.Time, tz string) bool {
 		return false
 	}
 	return schedule.InWindow(ws.Schedule, now, tz)
+}
+
+func (s *Store) MarkTokenInvalid(teamID string) error {
+	return s.UpdateWorkspace(teamID, func(w *Workspace) {
+		w.TokenInvalid = true
+		if w.TokenInvalidAt == "" {
+			w.TokenInvalidAt = time.Now().UTC().Format(time.RFC3339)
+		}
+	})
+}
+
+func (s *Store) Workspace(teamID string) (Workspace, bool) {
+	list, err := s.Workspaces()
+	if err != nil {
+		return Workspace{}, false
+	}
+	for _, ws := range list {
+		if ws.TeamID == teamID {
+			return ws, true
+		}
+	}
+	return Workspace{}, false
 }
 
 func loadOrCreateKey() ([]byte, error) {

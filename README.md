@@ -27,8 +27,21 @@ The daemon starts **always on**. Close the terminal; it keeps running.
 always-green status
 always-green stop
 always-green tui          # schedules, pause, add another workspace
+always-green reauth       # refresh tokens Slack has expired
 always-green snippet      # Chrome console helper for xoxc
 ```
+
+## When tokens expire
+
+Slack rotates session tokens every few days.
+
+Workspaces imported from the **Slack desktop app** refresh themselves: the daemon
+re-reads the app and carries on, no prompt.
+
+Workspaces added by **pasting from Chrome** cannot, so always-green tells you:
+a desktop notification when it happens, `always-green status` exits non-zero,
+and the next `always-green` run drops you into the paste flow. You can also run
+`always-green reauth` directly.
 
 ## Chrome tokens
 

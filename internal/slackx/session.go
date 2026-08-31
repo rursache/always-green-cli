@@ -43,6 +43,10 @@ type Session struct {
 	Xoxc   string
 	Xoxd   string
 
+	// OnTokenDead fires once, from the session goroutine, when Slack has
+	// confirmed via auth.test that these tokens are no longer usable
+	OnTokenDead func(teamID, name string)
+
 	mu         sync.Mutex
 	status     string
 	connected  bool
@@ -92,7 +96,9 @@ func (s *Session) Running() bool { return s.running.Load() }
 func (s *Session) Run(ctx context.Context) {
 	s.running.Store(true)
 	defer s.running.Store(false)
-	defer s.setState("stopped", false)
+	defer s.finish()
+
+	s.setState("connecting", false)
 
 	var conn *websocket.Conn
 	defer func() {
@@ -110,6 +116,10 @@ func (s *Session) Run(ctx context.Context) {
 		if err != nil {
 			log.Printf("[%s] connect failed: %v", s.Name, err)
 			if isAuthFail(err) {
+				s.markDead()
+				return false
+			}
+			if rejected, _ := s.tokensRejected(); rejected {
 				s.markDead()
 				return false
 			}
@@ -143,6 +153,7 @@ func (s *Session) Run(ctx context.Context) {
 			s.setState("error", false)
 			return
 		}
+		s.setState("reconnecting", false)
 		select {
 		case <-ctx.Done():
 			return
@@ -332,12 +343,32 @@ func (s *Session) tokensRejected() (bool, error) {
 
 func (s *Session) markDead() {
 	s.mu.Lock()
+	already := !s.tokenValid
 	s.tokenValid = false
 	s.status = "invalid_token"
 	s.connected = false
+	cb := s.OnTokenDead
 	s.mu.Unlock()
 	s.running.Store(false)
+	if already {
+		return
+	}
 	log.Printf("[%s] Slack rejected the tokens", s.Name)
+	if cb != nil {
+		cb(s.TeamID, s.Name)
+	}
+}
+
+// finish records the terminal state, leaving invalid_token intact so the
+// reason a session ended is not lost behind a generic "stopped"
+func (s *Session) finish() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.connected = false
+	if s.status == "invalid_token" {
+		return
+	}
+	s.status = "stopped"
 }
 
 func (s *Session) setState(status string, connected bool) {
