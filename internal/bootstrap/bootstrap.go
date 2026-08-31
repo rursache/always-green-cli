@@ -113,13 +113,16 @@ func firstRun(st *store.Store, out io.Writer) error {
 	}
 	switch strings.TrimSpace(choice) {
 	case "1":
-		return fromDesktop(st, out)
+		return fromDesktop(st, out, in)
 	default:
 		return fromChrome(st, out, in)
 	}
 }
 
-func fromDesktop(st *store.Store, out io.Writer) error {
+// in is threaded through rather than rebuilt: a second bufio.Reader over the
+// same stdin discards whatever the first one had already buffered, which
+// swallows the rest of a paste the user has already typed
+func fromDesktop(st *store.Store, out io.Writer, in *bufio.Reader) error {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Reading the Slack desktop app...")
 	fmt.Fprintln(out, "macOS may ask for Keychain access. If MDM blocks it, pick option 2 instead")
@@ -133,7 +136,6 @@ func fromDesktop(st *store.Store, out io.Writer) error {
 		fmt.Fprintln(out, "No workspace tokens in the Slack app")
 		fmt.Fprintln(out)
 	}
-	in := bufio.NewReader(os.Stdin)
 	return fromChrome(st, out, in)
 }
 
@@ -191,32 +193,36 @@ func fromChrome(st *store.Store, out io.Writer, in *bufio.Reader) error {
 	return nil
 }
 
+// takeXoxcLines collects xoxc lines until something that is not one arrives:
+// the xoxd, a blank line, or EOF. It used to stop as soon as the reader had
+// nothing buffered, which is a guess about timing rather than about content -
+// a paste split across reads (over ssh, or any paste past the tty's 4KB
+// canonical limit) silently lost every token after the first chunk.
 func takeXoxcLines(first string, in *bufio.Reader) (tokens []string, leftover string) {
-	add := func(s string) bool {
+	consider := func(s string) (done bool) {
 		s = strings.TrimSpace(s)
 		if s == "" {
-			return true
+			return len(tokens) > 0 // a blank line ends a paste already underway
 		}
 		if strings.HasPrefix(s, "xoxc-") {
 			tokens = append(tokens, s)
-			return true
+			return false
 		}
 		leftover = s
-		return false
+		return true
 	}
-	if !add(first) {
+	if consider(first) {
 		return tokens, leftover
 	}
-	for in.Buffered() > 0 {
+	for {
 		line, err := in.ReadString('\n')
-		if !add(line) {
+		if consider(line) {
 			return tokens, leftover
 		}
 		if err != nil {
 			return tokens, leftover
 		}
 	}
-	return tokens, leftover
 }
 
 func importAll(st *store.Store, out io.Writer) (int, error) {
