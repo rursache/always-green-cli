@@ -110,10 +110,14 @@ const desktopRetryEvery = 30 * time.Minute
 const refreshTimeout = 60 * time.Second
 
 // refreshWithin gives up waiting after d; the refresh itself keeps running and
-// will simply land on a later attempt if it eventually succeeds
-func refreshWithin(st *store.Store, ws store.Workspace, d time.Duration) error {
+// done always sees its real result, even after the caller has stopped waiting
+func refreshWithin(d time.Duration, refresh func() error, done func(error)) error {
 	res := make(chan error, 1)
-	go func() { res <- healWorkspace(st, ws) }()
+	go func() {
+		err := refresh()
+		done(err)
+		res <- err
+	}()
 	select {
 	case err := <-res:
 		return err
@@ -493,17 +497,45 @@ func onTokenDead(st *store.Store, heal *healer, kick func(), teamID, name string
 	// auth.test but keep failing the websocket cannot spin the Slack app
 	ws, ok := st.Workspace(teamID)
 	fromDesktop := ok && ws.Source == store.SourceDesktop
+	// gaveUp and healed order the timeout path against a refresh that finishes
+	// late, so fresh tokens are never flagged invalid by a verdict that was
+	// reached before they arrived
+	var mu sync.Mutex
+	gaveUp, healed := false, false
 	if ok && heal.claim(teamID, time.Now()) {
 		// bounded: a keychain read can block on a prompt, and this runs on the
 		// session goroutine that a shutdown may be waiting for
-		err := refreshWithin(st, ws, refreshTimeout)
-		heal.release(teamID)
+		err := refreshWithin(refreshTimeout, func() error {
+			return healWorkspace(st, ws)
+		}, func(err error) {
+			// the claim is held until the refresh really finishes, so a second
+			// heal cannot race this one on the store
+			defer heal.release(teamID)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			healed = true
+			if gaveUp {
+				log.Printf("[%s] late refresh succeeded, clearing the expired flag", name)
+				if err := st.UpdateWorkspace(teamID, clearTokenInvalid); err != nil {
+					log.Printf("[%s] could not clear expired flag: %v", name, err)
+				}
+			}
+			mu.Unlock()
+			kick()
+		})
 		if err == nil {
 			log.Printf("[%s] tokens expired, refreshed automatically", name)
-			kick()
 			return
 		}
 		log.Printf("[%s] automatic refresh failed: %v", name, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	gaveUp = true
+	if healed {
+		return
 	}
 	if err := st.MarkTokenInvalid(teamID); err != nil {
 		log.Printf("[%s] could not flag expired tokens: %v", name, err)
@@ -511,6 +543,11 @@ func onTokenDead(st *store.Store, heal *healer, kick func(), teamID, name string
 	log.Printf("[%s] tokens expired, run: always-green reauth", name)
 	notify.TokenExpired(name, fromDesktop)
 	kick()
+}
+
+func clearTokenInvalid(w *store.Workspace) {
+	w.TokenInvalid = false
+	w.TokenInvalidAt = ""
 }
 
 func startSession(parent context.Context, st *store.Store, sessions *sessionSet, heal *healer, kick func(), ws store.Workspace) {
