@@ -24,6 +24,8 @@ type fakeSlack struct {
 	api     *httptest.Server
 	dials   atomic.Int32
 	authHit atomic.Int32
+	refused atomic.Int32
+	reject  atomic.Bool
 
 	mu    sync.Mutex
 	conns []*websocket.Conn
@@ -45,6 +47,11 @@ func newFakeSlack(t *testing.T) *fakeSlack {
 	f := &fakeSlack{}
 	up := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	f.ws = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if f.reject.Load() {
+			f.refused.Add(1)
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		c, err := up.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -146,9 +153,7 @@ func TestServerCloseReconnectsOnce(t *testing.T) {
 	useFakeSlack(t, f, time.Hour) // no presence-driven reconnects
 
 	s := NewSession("test", "T1", "U1", "xoxc-test", "xoxd-test")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go s.Run(ctx)
+	runSession(t, s)
 
 	waitFor(t, func() bool { return f.dials.Load() == 1 }, "first connection")
 	f.closeAll()
@@ -157,6 +162,55 @@ func TestServerCloseReconnectsOnce(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 	if got := f.dials.Load(); got != 2 {
 		t.Fatalf("one close should cause one reconnect, got %d dials", got)
+	}
+}
+
+// A presence-triggered reconnect tears down the live connection before it
+// dials again, so a dial failure there must be retried like any other drop
+// rather than leaving the session reporting connected with no socket
+func TestAwayReconnectDialFailureRecovers(t *testing.T) {
+	f := newFakeSlack(t)
+	useFakeSlack(t, f, 20*time.Millisecond)
+
+	s := NewSession("test", "T1", "U1", "xoxc-test", "xoxd-test")
+	runSession(t, s)
+
+	waitFor(t, func() bool { return f.dials.Load() == 1 }, "first connection")
+	f.reject.Store(true)
+	waitFor(t, func() bool { return f.refused.Load() >= 2 }, "retried dials while the server is down")
+	f.reject.Store(false)
+	waitFor(t, func() bool { return f.dials.Load() >= 2 }, "reconnect once the server is back")
+
+	snap := s.Snapshot()
+	if !snap.Connected || snap.Status == "error" || snap.Status == "stopped" {
+		t.Fatalf("session should be live again, got %+v", snap)
+	}
+	if !s.Running() {
+		t.Fatal("session should still be running")
+	}
+}
+
+// When a presence-triggered reconnect exhausts its retries the session must
+// end in the error state so the daemon restarts it, not linger as connected
+func TestAwayReconnectExhaustedEndsInError(t *testing.T) {
+	f := newFakeSlack(t)
+	useFakeSlack(t, f, 20*time.Millisecond)
+
+	s := NewSession("test", "T1", "U1", "xoxc-test", "xoxd-test")
+	_, done := runSession(t, s)
+
+	waitFor(t, func() bool { return f.dials.Load() == 1 }, "first connection")
+	f.reject.Store(true)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not give up while the server stayed down")
+	}
+	if got := f.refused.Load(); got < maxConnectTry {
+		t.Fatalf("expected %d dial attempts before giving up, got %d", maxConnectTry, got)
+	}
+	if snap := s.Snapshot(); snap.Connected || snap.Status != "stopped" {
+		t.Fatalf("expected a stopped, disconnected session, got %+v", snap)
 	}
 }
 
@@ -179,6 +233,27 @@ func TestRunReleasesReaderOnCancel(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run leaked: did not return within 3s of cancel")
 	}
+}
+
+// runSession starts Run in the background and makes sure it has fully
+// returned before the test's cleanup restores the package-level fakes
+func runSession(t *testing.T, s *Session) (cancel func(), done <-chan struct{}) {
+	t.Helper()
+	ctx, cancelCtx := context.WithCancel(context.Background())
+	ch := make(chan struct{})
+	go func() {
+		s.Run(ctx)
+		close(ch)
+	}()
+	t.Cleanup(func() {
+		cancelCtx()
+		select {
+		case <-ch:
+		case <-time.After(5 * time.Second):
+			t.Error("Run did not return after cancel")
+		}
+	})
+	return cancelCtx, ch
 }
 
 func waitFor(t *testing.T, cond func() bool, what string) {

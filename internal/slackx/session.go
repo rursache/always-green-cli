@@ -238,8 +238,10 @@ func (s *Session) Run(ctx context.Context) {
 				}
 			}
 		case <-presT.C:
-			s.checkPresence(connect)
-			if !s.tokenValid {
+			if !s.checkPresence(connectWithRetry) {
+				if s.tokenValid {
+					s.setState("error", false)
+				}
 				return
 			}
 		}
@@ -336,16 +338,18 @@ func (s *Session) handleMessage(data []byte) {
 	}
 }
 
-func (s *Session) checkPresence(reconnect func() bool) {
+// checkPresence reports false when the session can no longer continue, either
+// because the tokens died or because a presence-triggered reconnect failed
+func (s *Session) checkPresence(reconnect func() bool) bool {
 	pres, err := GetPresence(s.Xoxc, s.Xoxd, s.UserID)
 	if err != nil {
 		var api APIError
 		if errors.As(err, &api) && TokenDead(api.Code) {
 			s.markDead()
-			return
+			return false
 		}
 		log.Printf("[%s] presence check failed: %v", s.Name, err)
-		return
+		return true
 	}
 	kind := classify(pres)
 	log.Printf("[%s] %s", s.Name, kind)
@@ -368,9 +372,12 @@ func (s *Session) checkPresence(reconnect func() bool) {
 		s.mu.Unlock()
 		if shouldReconnect(hits) {
 			log.Printf("[%s] reconnecting to reset presence", s.Name)
-			reconnect()
+			if !reconnect() {
+				return false
+			}
 		}
 	}
+	return true
 }
 
 func (s *Session) tokensRejected() (bool, error) {
