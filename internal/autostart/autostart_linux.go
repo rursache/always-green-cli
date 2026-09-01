@@ -89,8 +89,12 @@ func enabled() bool {
 	if path == "" {
 		return false
 	}
-	_, err := os.Stat(path)
-	return err == nil
+	if _, err := os.Stat(path); err != nil {
+		return false
+	}
+	// the unit file can exist while the .wants symlink is gone (a manual
+	// systemctl --user disable), so confirm with systemd
+	return run("systemctl", "--user", "is-enabled", unitName) == nil
 }
 
 func run(name string, args ...string) error {
