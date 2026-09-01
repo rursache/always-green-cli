@@ -129,13 +129,37 @@ func refreshWithin(d time.Duration, refresh func() error, done func(error)) erro
 // healer tracks in-flight and recent desktop refresh attempts; attempts run off
 // the main loop because reading the Keychain can block for a long time
 type healer struct {
-	mu   sync.Mutex
-	last map[string]time.Time
-	busy map[string]bool
+	mu      sync.Mutex
+	last    map[string]time.Time
+	busy    map[string]bool
+	settled map[string]int
 }
 
 func newHealer() *healer {
-	return &healer{last: map[string]time.Time{}, busy: map[string]bool{}}
+	return &healer{last: map[string]time.Time{}, busy: map[string]bool{}, settled: map[string]int{}}
+}
+
+// settling brackets the whole reaction to a token death, from the moment a
+// session reports it until the store reflects the outcome, so the reconciler
+// does not restart the dead session with the same tokens in the meantime
+func (h *healer) settling(teamID string) func() {
+	h.mu.Lock()
+	h.settled[teamID]++
+	h.mu.Unlock()
+	return func() {
+		h.mu.Lock()
+		h.settled[teamID]--
+		if h.settled[teamID] <= 0 {
+			delete(h.settled, teamID)
+		}
+		h.mu.Unlock()
+	}
+}
+
+func (h *healer) isSettling(teamID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.busy[teamID] || h.settled[teamID] > 0
 }
 
 func (h *healer) claim(teamID string, now time.Time) bool {
@@ -445,11 +469,7 @@ func syncSessions(ctx context.Context, st *store.Store, sessions *sessionSet, he
 			sessions.remove(id)
 			continue
 		}
-		snap := rt.sess.Snapshot()
-		if snap.Status == "invalid_token" {
-			continue
-		}
-		if !rt.sess.Running() || snap.Status == "error" {
+		if needsRestart(rt.sess.Snapshot(), rt.sess.Running(), heal.isSettling(id)) {
 			log.Printf("restarting %s", ws.Name)
 			rt.cancel()
 			sessions.remove(id)
@@ -462,6 +482,18 @@ func syncSessions(ctx context.Context, st *store.Store, sessions *sessionSet, he
 		}
 		startSession(ctx, st, sessions, heal, kick, ws)
 	}
+}
+
+// needsRestart decides whether a session for a workspace the store still wants
+// should be torn down and started afresh. A session whose tokens Slack
+// rejected is left alone while its death is being handled, but once that has
+// settled and the store still wants it, the tokens were healed to the same
+// values (a spurious rejection), and the dead session must be replaced
+func needsRestart(snap slackx.Snapshot, running, settling bool) bool {
+	if snap.Status == "invalid_token" && settling {
+		return false
+	}
+	return !running || snap.Status == "error"
 }
 
 func tryHeal(st *store.Store, heal *healer, kick func(), ws store.Workspace, now time.Time) {
@@ -493,6 +525,7 @@ func healWorkspace(st *store.Store, ws store.Workspace) error {
 
 // onTokenDead is called from a session goroutine once Slack rejects the tokens
 func onTokenDead(st *store.Store, heal *healer, kick func(), teamID, name string) {
+	defer heal.settling(teamID)()
 	// share the throttle with the periodic retry so tokens that keep passing
 	// auth.test but keep failing the websocket cannot spin the Slack app
 	ws, ok := st.Workspace(teamID)

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/rursache/always-green-cli/internal/slackx"
 )
 
 func TestHealerThrottlesRetries(t *testing.T) {
@@ -66,5 +68,49 @@ func TestRefreshWithinReportsTimelyResult(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("done never ran")
+	}
+}
+
+func TestHealerSettlingCoversClaimAndHandling(t *testing.T) {
+	h := newHealer()
+	if h.isSettling("T1") {
+		t.Fatal("nothing is in flight yet")
+	}
+	done := h.settling("T1")
+	if !h.isSettling("T1") {
+		t.Fatal("handling a token death must count as settling")
+	}
+	h.claim("T1", time.Now())
+	done()
+	if !h.isSettling("T1") {
+		t.Fatal("a held heal claim must keep the workspace settling")
+	}
+	h.release("T1")
+	if h.isSettling("T1") {
+		t.Fatal("released and handled, nothing should be settling")
+	}
+}
+
+// A session that reported dead tokens must be restarted once its death has
+// been handled and the store still wants it, since that means the refresh
+// produced the same tokens and nothing else will bring the workspace back
+func TestNeedsRestart(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		status   string
+		running  bool
+		settling bool
+		want     bool
+	}{
+		{"healthy", "active", true, false, false},
+		{"errored", "error", true, false, true},
+		{"exited", "stopped", false, false, true},
+		{"dead tokens, heal in flight", "invalid_token", false, true, false},
+		{"dead tokens, healed to same values", "invalid_token", false, false, true},
+	} {
+		got := needsRestart(slackx.Snapshot{Status: tc.status}, tc.running, tc.settling)
+		if got != tc.want {
+			t.Errorf("%s: needsRestart = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
