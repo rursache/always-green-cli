@@ -224,10 +224,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
-	return m, m.updateInputs(msg)
+	cmd := m.updateInputs(msg)
+	return m, cmd
 }
 
-func (m model) updateInputs(msg tea.Msg) tea.Cmd {
+// updateInputs needs the pointer receiver: the text inputs are values, and
+// feeding a keystroke to a copy of the model silently drops it
+func (m *model) updateInputs(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	switch m.screen {
 	case screenAdd:
@@ -398,7 +401,8 @@ func (m model) keyAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		return m.submitAdd()
 	}
-	return m, m.updateInputs(msg)
+	cmd := m.updateInputs(msg)
+	return m, cmd
 }
 
 func (m *model) focusAdd() {
@@ -505,7 +509,8 @@ func (m model) keySchedule(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "1", "2", "3", "4", "5", "6", "7":
 		if m.startIn.Focused() || m.endIn.Focused() {
-			return m, m.updateInputs(msg)
+			cmd := m.updateInputs(msg)
+			return m, cmd
 		}
 		n, _ := strconv.Atoi(msg.String())
 		id := schedule.DayIDs[n-1]
@@ -564,7 +569,8 @@ func (m model) keySchedule(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.info = "schedule saved"
 		return m, nil
 	}
-	return m, m.updateInputs(msg)
+	cmd := m.updateInputs(msg)
+	return m, cmd
 }
 
 func (m model) keyKeep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
