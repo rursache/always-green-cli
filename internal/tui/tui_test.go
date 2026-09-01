@@ -125,3 +125,32 @@ func TestDeleteRemovesWorkspace(t *testing.T) {
 		t.Fatalf("err %q info %q workspaces %d", m.err, m.info, len(m.workspaces))
 	}
 }
+
+// The store can shrink underneath an open dashboard (a clear from another
+// terminal), and the selection must land on a real row, or on zero when the
+// list is empty so the first workspace added afterwards is selected
+func TestReloadClampsSelection(t *testing.T) {
+	ws := func(id string) store.Workspace {
+		return store.Workspace{Name: id, TeamID: id, Xoxc: "xoxc", Xoxd: "xoxd"}
+	}
+	m := testModel(t, ws("T1"), ws("T2"), ws("T3"))
+	m = update(t, m, key("j"))
+	m = update(t, m, key("j"))
+	if m.sel != 2 {
+		t.Fatalf("expected the last row selected, got %d", m.sel)
+	}
+	if err := m.store.ClearWorkspaces(); err != nil {
+		t.Fatal(err)
+	}
+	m.reload()
+	if m.sel != 0 {
+		t.Fatalf("selection on an empty list should be 0, got %d", m.sel)
+	}
+	if err := m.store.SaveWorkspace(ws("T4")); err != nil {
+		t.Fatal(err)
+	}
+	m.reload()
+	if got, ok := m.selected(); !ok || got.TeamID != "T4" {
+		t.Fatalf("the re-added workspace should be selected, got %+v ok %v", got, ok)
+	}
+}

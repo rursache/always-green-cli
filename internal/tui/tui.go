@@ -615,8 +615,8 @@ func (m model) keyDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *model) reload() {
 	list, _ := m.store.Workspaces()
 	m.workspaces = list
-	if m.sel >= len(m.workspaces) && m.sel > 0 {
-		m.sel = len(m.workspaces) - 1
+	if m.sel >= len(m.workspaces) {
+		m.sel = max(len(m.workspaces)-1, 0)
 	}
 	st, _ := daemon.ReadStatus()
 	m.daemon = st
