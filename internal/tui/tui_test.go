@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/rursache/always-green-cli/internal/desktop"
+	"github.com/rursache/always-green-cli/internal/importws"
 	"github.com/rursache/always-green-cli/internal/paths"
 	"github.com/rursache/always-green-cli/internal/store"
 
@@ -152,5 +153,109 @@ func TestReloadClampsSelection(t *testing.T) {
 	m.reload()
 	if got, ok := m.selected(); !ok || got.TeamID != "T4" {
 		t.Fatalf("the re-added workspace should be selected, got %+v ok %v", got, ok)
+	}
+}
+
+func keyMsg(t *testing.T, m model, k string) (model, tea.Cmd) {
+	t.Helper()
+	next, cmd := m.Update(key(k))
+	return next.(model), cmd
+}
+
+func typeInto(t *testing.T, m model, text string) model {
+	t.Helper()
+	for _, r := range text {
+		m = update(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	return m
+}
+
+// Talking to Slack from Update freezes the whole dashboard for the length
+// of the round trip, so a paste is handed to a command and Enter is a no-op
+// until that command reports back
+func TestAddRunsSaveAsCommandAndIgnoresRepeatEnter(t *testing.T) {
+	m := testModel(t)
+	m = update(t, m, key("a"))
+	m = update(t, m, key("esc"))
+	m = update(t, m, key("a"))
+	m = update(t, m, importScanMsg{})
+	if m.screen != screenAdd || !m.xoxcIn.Focused() {
+		t.Fatalf("expected the paste screen with the xoxc field focused, got screen %d", m.screen)
+	}
+	m = typeInto(t, m, "xoxc-token")
+	m = update(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	m = typeInto(t, m, "xoxd-cookie")
+
+	m, cmd := keyMsg(t, m, "enter")
+	if cmd == nil {
+		t.Fatal("submitting must return a command, not save inline")
+	}
+	if !m.saving {
+		t.Fatal("model should be marked saving while the command runs")
+	}
+	m, cmd = keyMsg(t, m, "enter")
+	if cmd != nil {
+		t.Fatal("a second Enter while saving must not submit again")
+	}
+	m, _ = keyMsg(t, m, "esc")
+	if m.screen != screenAdd {
+		t.Fatal("keys must be ignored while saving")
+	}
+
+	m = update(t, m, saveDoneMsg{err: errors.New("Slack rejected these tokens")})
+	if m.saving || m.err == "" || m.screen != screenAdd {
+		t.Fatalf("a failed save should stay on the paste screen with the error: saving %v err %q screen %d", m.saving, m.err, m.screen)
+	}
+	if got := m.xoxcIn.Value(); got != "xoxc-token" {
+		t.Fatalf("a failed save must keep what was typed, got %q", got)
+	}
+}
+
+func TestAddSuccessOpensScheduleForNewWorkspace(t *testing.T) {
+	m := testModel(t, store.Workspace{Name: "acme", TeamID: "T1", Xoxc: "xoxc", Xoxd: "xoxd"})
+	m.screen = screenAdd
+	m.saving = true
+	m.xoxcIn.SetValue("xoxc")
+	m = update(t, m, saveDoneMsg{res: importws.Result{Name: "acme", TeamID: "T1", Added: true}})
+	if m.saving || m.screen != screenSchedule || m.schedTeam != "T1" {
+		t.Fatalf("saving %v screen %d team %q", m.saving, m.screen, m.schedTeam)
+	}
+	if m.xoxcIn.Value() != "" {
+		t.Fatal("the token fields should be cleared after a save")
+	}
+	m.screen = screenAdd
+	m.saving = true
+	m = update(t, m, saveDoneMsg{res: importws.Result{Name: "acme", TeamID: "T1"}})
+	if m.screen != screenList || m.info != "refreshed acme" {
+		t.Fatalf("a re-paste should return to the list: screen %d info %q", m.screen, m.info)
+	}
+}
+
+func TestImportRunsSaveAsCommand(t *testing.T) {
+	m := testModel(t)
+	m = update(t, m, key("a"))
+	m = update(t, m, importScanMsg{found: []desktop.Found{{Name: "acme", TeamID: "T1", Xoxc: "x", Xoxd: "d"}}})
+	m, cmd := keyMsg(t, m, "enter")
+	if cmd == nil || !m.saving {
+		t.Fatalf("import must run as a command: cmd %v saving %v", cmd != nil, m.saving)
+	}
+	m, cmd = keyMsg(t, m, "enter")
+	if cmd != nil {
+		t.Fatal("a second Enter while saving must not import again")
+	}
+	m = update(t, m, saveDoneMsg{imported: 1})
+	if m.saving || m.screen != screenList || m.info == "" {
+		t.Fatalf("saving %v screen %d info %q", m.saving, m.screen, m.info)
+	}
+}
+
+func TestImportWithNothingPickedDoesNotSave(t *testing.T) {
+	m := testModel(t)
+	m = update(t, m, key("a"))
+	m = update(t, m, importScanMsg{found: []desktop.Found{{Name: "acme", TeamID: "T1", Xoxc: "x", Xoxd: "d"}}})
+	m = update(t, m, key(" "))
+	m, cmd := keyMsg(t, m, "enter")
+	if cmd != nil || m.saving || m.err == "" {
+		t.Fatalf("cmd %v saving %v err %q", cmd != nil, m.saving, m.err)
 	}
 }

@@ -45,6 +45,14 @@ type importScanMsg struct {
 	err   error
 }
 
+// saveDoneMsg reports a workspace save that ran off the event loop; imported
+// counts the workspaces saved from the Slack app, res describes a paste
+type saveDoneMsg struct {
+	imported int
+	res      importws.Result
+	err      error
+}
+
 type model struct {
 	store      *store.Store
 	tz         string
@@ -77,6 +85,9 @@ type model struct {
 	delTeam string
 	delName string
 
+	// saving is set while a save talks to Slack in the background, so a
+	// second Enter cannot submit twice or land on the next screen
+	saving    bool
 	importing bool
 	impFound  []desktop.Found
 	impPick   map[int]bool
@@ -210,6 +221,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(msg.found) == 0 {
 			m.screen = screenAdd
+			m.addFocus = 1
+			m.focusAdd()
 			m.err = "no workspaces in the Slack app, paste tokens instead"
 			return m, nil
 		}
@@ -221,11 +234,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.impSel = 0
 		m.screen = screenImport
 		return m, nil
+	case saveDoneMsg:
+		return m.saveDone(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
 	cmd := m.updateInputs(msg)
 	return m, cmd
+}
+
+func (m model) saveDone(msg saveDoneMsg) (tea.Model, tea.Cmd) {
+	m.saving = false
+	if msg.err != nil {
+		m.err = msg.err.Error()
+		return m, nil
+	}
+	_ = daemon.Reload()
+	m.reload()
+	m.err = ""
+	if msg.imported > 0 {
+		m.screen = screenList
+		m.info = fmt.Sprintf("imported %d workspace(s) from Slack", msg.imported)
+		return m, pollPresence(m.workspaces)
+	}
+	m.xoxcIn.SetValue("")
+	m.xoxdIn.SetValue("")
+	m.nameIn.SetValue("")
+	if !msg.res.Added {
+		m.screen = screenList
+		m.info = "refreshed " + msg.res.Name
+		return m, pollPresence(m.workspaces)
+	}
+	ws, _ := m.store.Workspace(msg.res.TeamID)
+	m.openSchedule(ws)
+	m.info = "added " + msg.res.Name
+	return m, pollPresence(m.workspaces)
 }
 
 // updateInputs needs the pointer receiver: the text inputs are values, and
@@ -330,6 +373,9 @@ func scanDesktop() tea.Msg {
 }
 
 func (m model) keyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.saving {
+		return m, nil
+	}
 	if m.importing {
 		if msg.String() == "esc" || msg.String() == "q" {
 			m.importing = false
@@ -364,30 +410,33 @@ func (m model) keyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) submitImport() (tea.Model, tea.Cmd) {
-	var n int
+	var picked []desktop.Found
 	for i, f := range m.impFound {
-		if !m.impPick[i] {
-			continue
+		if m.impPick[i] {
+			picked = append(picked, f)
 		}
-		if _, err := importws.Save(m.store, f, store.SourceDesktop); err != nil {
-			m.err = err.Error()
-			return m, nil
-		}
-		n++
 	}
-	if n == 0 {
+	if len(picked) == 0 {
 		m.err = "select at least one workspace"
 		return m, nil
 	}
-	_ = daemon.Reload()
-	m.reload()
-	m.screen = screenList
-	m.info = fmt.Sprintf("imported %d workspace(s) from Slack", n)
+	m.saving = true
 	m.err = ""
-	return m, pollPresence(m.workspaces)
+	st := m.store
+	return m, func() tea.Msg {
+		for i, f := range picked {
+			if _, err := importws.Save(st, f, store.SourceDesktop); err != nil {
+				return saveDoneMsg{imported: i, err: err}
+			}
+		}
+		return saveDoneMsg{imported: len(picked)}
+	}
 }
 
 func (m model) keyAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.saving {
+		return m, nil
+	}
 	switch msg.String() {
 	case "esc":
 		m.screen = screenList
@@ -430,28 +479,16 @@ func (m model) submitAdd() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// the same path the CLI uses, so a pasted workspace records its domain
-	// and everything else the daemon needs to refresh it later on its own
+	// and everything else the daemon needs to refresh it later on its own;
+	// it talks to Slack, so it runs as a command rather than on the loop
 	f := desktop.Found{Name: strings.TrimSpace(m.nameIn.Value()), Xoxc: xoxc, Xoxd: xoxd}
-	res, err := importws.Save(m.store, f, store.SourcePaste)
-	if err != nil {
-		m.err = err.Error()
-		return m, nil
-	}
-	_ = daemon.Reload()
-	m.reload()
+	m.saving = true
 	m.err = ""
-	m.xoxcIn.SetValue("")
-	m.xoxdIn.SetValue("")
-	m.nameIn.SetValue("")
-	if !res.Added {
-		m.screen = screenList
-		m.info = "refreshed " + res.Name
-		return m, pollPresence(m.workspaces)
+	st := m.store
+	return m, func() tea.Msg {
+		res, err := importws.Save(st, f, store.SourcePaste)
+		return saveDoneMsg{res: res, err: err}
 	}
-	ws, _ := m.store.Workspace(res.TeamID)
-	m.openSchedule(ws)
-	m.info = "added " + res.Name
-	return m, pollPresence(m.workspaces)
 }
 
 func (m *model) openSchedule(ws store.Workspace) {
@@ -808,6 +845,9 @@ func statusOf(ws store.Workspace, dws daemon.WorkspaceStatus, p slackx.Presence,
 }
 
 func (m model) viewImport() string {
+	if m.saving {
+		return titleStyle.Render("Saving workspaces...") + "\n\n" + dimStyle.Render("checking the tokens with Slack")
+	}
 	if m.importing {
 		return titleStyle.Render("Reading Slack desktop app...") + "\n\n" +
 			dimStyle.Render("macOS may ask for Keychain access to Slack Safe Storage") + "\n" +
@@ -851,8 +891,15 @@ func (m model) viewAdd() string {
 		"xoxd (cookie d)",
 		m.xoxdIn.View(),
 		"",
-		"Tab fields   Enter save   Esc cancel",
+		m.addFooter(),
 	}, "\n")
+}
+
+func (m model) addFooter() string {
+	if m.saving {
+		return dimStyle.Render("Checking the tokens with Slack...")
+	}
+	return "Tab fields   Enter save   Esc cancel"
 }
 
 func (m model) viewSchedule() string {
