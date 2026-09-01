@@ -47,9 +47,9 @@ type runtime struct {
 	sess   *slackx.Session
 }
 
-// sessionSet guards the live sessions. The reconciler mutates them on the main
+// sessionSet guards the live sessions; the reconciler mutates them on the main
 // loop while the IPC handler reads them from its own goroutine, so an
-// unguarded map here is a fatal "concurrent map iteration and map write".
+// unguarded map here is a fatal "concurrent map iteration and map write"
 type sessionSet struct {
 	mu   sync.Mutex
 	byID map[string]*runtime
@@ -109,8 +109,8 @@ const desktopRetryEvery = 30 * time.Minute
 // request cannot hold a session goroutine, and with it a shutdown, forever
 const refreshTimeout = 60 * time.Second
 
-// refreshWithin gives up waiting after d. The refresh itself keeps running and
-// will simply land on a later attempt if it eventually succeeds.
+// refreshWithin gives up waiting after d; the refresh itself keeps running and
+// will simply land on a later attempt if it eventually succeeds
 func refreshWithin(st *store.Store, ws store.Workspace, d time.Duration) error {
 	res := make(chan error, 1)
 	go func() { res <- healWorkspace(st, ws) }()
@@ -122,8 +122,8 @@ func refreshWithin(st *store.Store, ws store.Workspace, d time.Duration) error {
 	}
 }
 
-// healer tracks in-flight and recent desktop refresh attempts. Attempts run off
-// the main loop because reading the Keychain can block for a long time.
+// healer tracks in-flight and recent desktop refresh attempts; attempts run off
+// the main loop because reading the Keychain can block for a long time
 type healer struct {
 	mu   sync.Mutex
 	last map[string]time.Time
@@ -157,9 +157,9 @@ func (h *healer) release(teamID string) {
 // ErrAlreadyRunning means another daemon holds the lock
 var ErrAlreadyRunning = errors.New("another always-green daemon is already running")
 
-// acquireLock takes an exclusive advisory lock held for the process lifetime.
-// The kernel drops it however the process dies, so unlike a PID file it cannot
-// go stale, and a recycled PID cannot masquerade as a live daemon.
+// acquireLock takes an exclusive advisory lock held for the process lifetime;
+// the kernel drops it however the process dies, so unlike a PID file it cannot
+// go stale, and a recycled PID cannot masquerade as a live daemon
 func acquireLock() (*os.File, error) {
 	f, err := os.OpenFile(paths.DaemonLock(), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -354,9 +354,9 @@ func Reload() error {
 	return err
 }
 
-// Running reports whether a daemon holds the lock. Probing by taking the lock
+// Running reports whether a daemon holds the lock; probing by taking the lock
 // and dropping it immediately means a crashed daemon is never mistaken for a
-// live one, and neither is an unrelated process that inherited its PID.
+// live one, and neither is an unrelated process that inherited its PID
 func Running() bool {
 	if err := paths.EnsureDir(); err != nil {
 		return false
@@ -477,9 +477,9 @@ func tryHeal(st *store.Store, heal *healer, kick func(), ws store.Workspace, now
 	}()
 }
 
-// healWorkspace re-mints a token without troubling the user. A workspace from
+// healWorkspace re-mints a token without troubling the user; a workspace from
 // the Slack app re-reads the app; one pasted from Chrome mints a new xoxc from
-// its d cookie, which outlives the token by months.
+// its d cookie, which outlives the token by months
 func healWorkspace(st *store.Store, ws store.Workspace) error {
 	if ws.Source == store.SourceDesktop {
 		return importws.RefreshDesktop(st, ws.TeamID)

@@ -66,10 +66,10 @@ type Session struct {
 	running atomic.Bool
 }
 
-// readEvent carries a read from one websocket. gen identifies which connection
+// readEvent carries a read from one websocket; gen identifies which connection
 // produced it: closing a connection makes its reader report an error, and
 // without the generation that error looks exactly like the replacement
-// connection dying, which used to cascade into an endless reconnect loop.
+// connection dying, which used to cascade into an endless reconnect loop
 type readEvent struct {
 	gen  int
 	data []byte

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 )
 
-// currentBinary resolves the path the launcher should run. Symlinks are
-// followed so a Homebrew shim in bin/ does not break when the cellar moves.
+// currentBinary resolves the path the launcher should run, symlinks are
+// followed so a Homebrew shim in bin/ does not break when the cellar moves
 func currentBinary() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {

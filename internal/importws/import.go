@@ -58,9 +58,9 @@ func save(st *store.Store, f desktop.Found, auth slackx.Auth, source string) (Re
 	return Result{Name: name, TeamID: auth.TeamID, Added: added}, nil
 }
 
-// RefreshDesktop re-reads one workspace's tokens from the Slack desktop app.
-// Only the entry Slack itself confirms belongs to teamID is saved, so a stale
-// or unrelated profile cannot overwrite the wrong workspace.
+// RefreshDesktop re-reads one workspace's tokens from the Slack desktop app,
+// only the entry Slack itself confirms belongs to teamID is saved, so a stale
+// or unrelated profile cannot overwrite the wrong workspace
 func RefreshDesktop(st *store.Store, teamID string) error {
 	found, err := desktop.Discover()
 	if err != nil {
@@ -80,10 +80,10 @@ func RefreshDesktop(st *store.Store, teamID string) error {
 	return fmt.Errorf("the Slack app has no working tokens for this workspace")
 }
 
-// RefreshCookie mints a new xoxc from the workspace's d cookie. The cookie is
+// RefreshCookie mints a new xoxc from the workspace's d cookie, which is
 // the durable credential and outlives the token by months, so a workspace
 // added by pasting from Chrome can recover on its own until the cookie itself
-// expires. Returns slackx.ErrCookieDead when only a human can fix it.
+// expires; returns slackx.ErrCookieDead when only a human can fix it
 func RefreshCookie(st *store.Store, teamID string) error {
 	ws, ok := st.Workspace(teamID)
 	if !ok {

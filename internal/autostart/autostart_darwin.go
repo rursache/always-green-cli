@@ -20,7 +20,7 @@ func plistPath() string {
 }
 
 // RunAtLoad without KeepAlive: launchd starts the daemon at login, but a
-// deliberate "always-green stop" stays stopped instead of being resurrected.
+// deliberate "always-green stop" stays stopped instead of being resurrected
 const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

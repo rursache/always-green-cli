@@ -120,9 +120,9 @@ func runDefault() error {
 	return nil
 }
 
-// enableAutostart registers the login item on first run. It is best effort:
+// enableAutostart registers the login item on first run; it is best effort:
 // staying green right now matters more than surviving a reboot, so a failure
-// is reported but never blocks startup.
+// is reported but never blocks startup
 func enableAutostart() {
 	if !autostart.Supported() || autostart.Enabled() {
 		return

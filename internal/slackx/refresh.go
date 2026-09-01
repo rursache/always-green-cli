@@ -10,15 +10,15 @@ import (
 	"time"
 )
 
-// Slack's web client mints a fresh xoxc from the d cookie every time it boots.
-// The d cookie is the durable session, valid for months; the xoxc is a
-// short-lived derivative that rotates in days. Loading the client's boot page
+// Slack's web client mints a fresh xoxc from the d cookie every time it boots;
+// the d cookie is the durable session, valid for months, and the xoxc is a
+// short-lived derivative that rotates in days; loading the client's boot page
 // with the cookie yields a new token, so an expired xoxc alone never needs the
-// user to paste anything again.
+// user to paste anything again
 //
 // The bare workspace URL is not usable here: it answers 200 without the boot
 // data unless the caller replays the browser's redirect chain, so the redirect
-// endpoint is requested directly.
+// endpoint is requested directly
 var (
 	apiTokenRe   = regexp.MustCompile(`"api_token":"(xoxc-[^"]+)"`)
 	refreshLimit = int64(8 << 20)
@@ -32,7 +32,7 @@ var (
 const bootDomain = "slack.com"
 
 // ErrCookieDead means the d cookie itself is no longer a valid session, so
-// there is nothing left to refresh from and the user has to sign in again.
+// there is nothing left to refresh from and the user has to sign in again
 var ErrCookieDead = fmt.Errorf("the Slack d cookie is no longer valid")
 
 // WorkspaceDomain pulls the subdomain out of an auth.test url field, e.g.
@@ -60,9 +60,9 @@ func WorkspaceDomain(rawURL string) string {
 	return sub
 }
 
-// RefreshToken mints a new xoxc for domain using only the d cookie. It returns
+// RefreshToken mints a new xoxc for domain using only the d cookie; it returns
 // ErrCookieDead when Slack serves a page with no token, which is what a signed
-// out session looks like.
+// out session looks like
 func RefreshToken(domain, xoxd string) (string, error) {
 	if domain == "" {
 		return "", fmt.Errorf("no workspace domain recorded for this workspace")
@@ -99,8 +99,8 @@ func RefreshToken(domain, xoxd string) (string, error) {
 	return string(m[1]), nil
 }
 
-// cookieHeader pairs d with the d-s companion Slack's client expects. d-s is
-// just a timestamp the browser sets locally, so it can be synthesised.
+// cookieHeader pairs d with the d-s companion Slack's client expects, d-s is
+// just a timestamp the browser sets locally, so it can be synthesised
 func cookieHeader(xoxd string) string {
 	return fmt.Sprintf("d=%s; d-s=%d", xoxd, time.Now().Unix()-10)
 }

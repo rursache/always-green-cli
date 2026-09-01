@@ -41,7 +41,7 @@ func Discover() ([]Found, error) {
 }
 
 // isTeamID reports whether a LevelDB key is a Slack-assigned id rather than a
-// token we fell back to using as a key. Enterprise Grid orgs are E-prefixed.
+// token we fell back to using as a key; Enterprise Grid orgs are E-prefixed
 // orderedKeys sorts identified workspaces ahead of token-keyed fallbacks
 func orderedKeys(tokens map[string]teamEntry) []string {
 	keys := make([]string, 0, len(tokens))

@@ -28,8 +28,8 @@ func Ensure(st *store.Store, out io.Writer) error {
 }
 
 // EnsureValid walks the user through re-auth for any workspace whose tokens
-// Slack has rejected. Desktop-imported workspaces heal themselves in the
-// daemon, so anything still flagged here needs a human paste.
+// Slack has rejected; desktop-imported workspaces heal themselves in the
+// daemon, so anything still flagged here needs a human paste
 func EnsureValid(st *store.Store, out io.Writer) error {
 	list, err := st.Workspaces()
 	if err != nil {
@@ -55,8 +55,8 @@ func EnsureValid(st *store.Store, out io.Writer) error {
 }
 
 // Reauth re-reads tokens: straight from the Slack app when that is where they
-// came from, otherwise a manual Chrome paste. With force it refreshes every
-// workspace, not just the ones Slack has already rejected.
+// came from, otherwise a manual Chrome paste; with force it refreshes every
+// workspace, not just the ones Slack has already rejected
 func Reauth(st *store.Store, out io.Writer, force bool) error {
 	list, err := st.Workspaces()
 	if err != nil {
@@ -208,10 +208,10 @@ func fromChrome(st *store.Store, out io.Writer, in *bufio.Reader) error {
 }
 
 // takeXoxcLines collects xoxc lines until something that is not one arrives:
-// the xoxd, a blank line, or EOF. It used to stop as soon as the reader had
+// the xoxd, a blank line, or EOF; it used to stop as soon as the reader had
 // nothing buffered, which is a guess about timing rather than about content -
 // a paste split across reads (over ssh, or any paste past the tty's 4KB
-// canonical limit) silently lost every token after the first chunk.
+// canonical limit) silently lost every token after the first chunk
 func takeXoxcLines(first string, in *bufio.Reader) (tokens []string, leftover string) {
 	consider := func(s string) (done bool) {
 		s = strings.TrimSpace(s)

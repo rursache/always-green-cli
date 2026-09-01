@@ -25,7 +25,7 @@ func unitPath() string {
 }
 
 // Type=forking because the daemon subcommand runs in the foreground and we
-// want systemd to track it directly, so Type=simple is correct here.
+// want systemd to track it directly, so Type=simple is correct here
 const unitTemplate = `[Unit]
 Description=always-green (keep Slack presence active)
 After=network-online.target

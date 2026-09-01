@@ -10,8 +10,8 @@ import (
 
 // A real paste does not arrive in one read: bracketed paste over ssh, and any
 // paste past the tty's 4KB canonical limit, land in chunks with a gap between
-// them. Reading only what was already buffered dropped everything after the
-// first chunk.
+// them; reading only what was already buffered dropped everything after the
+// first chunk
 func TestTakeXoxcLinesSurvivesChunkedPaste(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {

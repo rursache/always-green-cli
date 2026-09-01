@@ -65,10 +65,10 @@ type Store struct {
 	key []byte
 }
 
-// withFileLock serialises a read-modify-write across processes. The daemon and
+// withFileLock serialises a read-modify-write across processes; the daemon and
 // every CLI/TUI invocation open their own Store, so the in-process mutex alone
 // let two of them read the same state, each apply a change, and the last write
-// win - silently dropping the other's edit.
+// win - silently dropping the other's edit
 func withFileLock(fn func() error) error {
 	f, err := os.OpenFile(paths.StoreLock(), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {

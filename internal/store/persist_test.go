@@ -127,8 +127,8 @@ func TestWithFileLockAdmitsOneAtATime(t *testing.T) {
 }
 
 // A read-modify-write that another process can interleave with loses the
-// other side's field. The sleep widens the window a real daemon/CLI pair hits
-// by doing decrypt, mutate, encrypt, write between the read and the rename.
+// other side's field; the sleep widens the window a real daemon/CLI pair hits
+// by doing decrypt, mutate, encrypt, write between the read and the rename
 func TestConcurrentUpdatesDoNotLoseFields(t *testing.T) {
 	st := tempStore(t)
 	if err := st.SaveWorkspace(Workspace{Name: "acme", TeamID: "T1"}); err != nil {

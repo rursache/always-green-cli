@@ -13,8 +13,8 @@ import (
 )
 
 // maxLine bounds a single request or response so a wedged peer cannot make us
-// read forever. Status payloads grow with the workspace count, so this is
-// generous rather than tight.
+// read forever; status payloads grow with the workspace count, so this is
+// generous rather than tight
 const maxLine = 4 << 20
 
 func Send(cmd string) (string, error) {

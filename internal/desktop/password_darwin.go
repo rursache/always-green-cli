@@ -9,14 +9,14 @@ import (
 	"time"
 )
 
-// keychainTimeout is per lookup. Several accounts may exist (a direct download
+// keychainTimeout is per lookup; several accounts may exist (a direct download
 // and a Mac App Store install keep separate items), and a blocked prompt would
-// otherwise stall the daemon for minutes.
+// otherwise stall the daemon for minutes
 const keychainTimeout = 15 * time.Second
 
 // safeStoragePasswords returns every candidate rather than the first non-empty
 // one: with two Slack installs the first hit can belong to the other profile,
-// and the caller can only tell by trying to decrypt with it.
+// and the caller can only tell by trying to decrypt with it
 func safeStoragePasswords() ([][]byte, error) {
 	attempts := [][]string{
 		{"find-generic-password", "-s", "Slack Safe Storage", "-w"},

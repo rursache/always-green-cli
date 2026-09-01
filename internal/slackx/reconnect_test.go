@@ -16,9 +16,9 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// fakeSlack stands in for the websocket endpoint and the REST API. The REST
+// fakeSlack stands in for the websocket endpoint and the REST API, the REST
 // side always reports the user as auto-away, which is what drives the
-// presence-reset reconnect.
+// presence-reset reconnect
 type fakeSlack struct {
 	ws      *httptest.Server
 	api     *httptest.Server
@@ -102,9 +102,9 @@ func useFakeSlack(t *testing.T, f *fakeSlack, presence time.Duration) {
 }
 
 // A presence-triggered reconnect closes the old connection, whose reader then
-// reports the close. If that report is not scoped to the connection it came
+// reports the close; if that report is not scoped to the connection it came
 // from, the loop mistakes it for the new connection dying and reconnects
-// again, forever, hammering Slack with no backoff.
+// again, forever, hammering Slack with no backoff
 func TestAwayReconnectDoesNotStorm(t *testing.T) {
 	f := newFakeSlack(t)
 	useFakeSlack(t, f, 20*time.Millisecond)

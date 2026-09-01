@@ -58,8 +58,8 @@ func (e APIError) Error() string {
 }
 
 // HTTPError is returned when the response was not something Slack's API
-// produced: a proxy error page, a CDN block, an empty body. Keeping the status
-// separate from APIError stops a transport failure being read as a dead token.
+// produced: a proxy error page, a CDN block, an empty body; keeping the status
+// separate from APIError stops a transport failure being read as a dead token
 type HTTPError struct {
 	Status int
 	Body   string
