@@ -25,6 +25,10 @@ const (
 
 type Config struct {
 	Timezone string `json:"timezone,omitempty"`
+	// Autostart is nil until the user runs "autostart on/off" explicitly;
+	// nil is treated as opt-in so a bare run still sets up login start on
+	// first use, but never overrides an explicit "off"
+	Autostart *bool `json:"autostart,omitempty"`
 }
 
 type UserInfo struct {

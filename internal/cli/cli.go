@@ -107,7 +107,10 @@ func runDefault() error {
 	if err := start(); err != nil {
 		return err
 	}
-	enableAutostart()
+	cfg, _ := st.Config()
+	if cfg.Autostart == nil || *cfg.Autostart {
+		enableAutostart()
+	}
 	fmt.Println()
 	fmt.Println("You're green while this machine is on")
 	name := progName()
@@ -145,10 +148,16 @@ func autostartCmd(args []string) error {
 		if err := autostart.Enable(); err != nil {
 			return err
 		}
+		if err := setAutostartPref(true); err != nil {
+			return err
+		}
 		fmt.Println("Launch at login: enabled")
 		return nil
 	case "off", "disable":
 		if err := autostart.Disable(); err != nil {
+			return err
+		}
+		if err := setAutostartPref(false); err != nil {
 			return err
 		}
 		fmt.Println("Launch at login: disabled")
@@ -163,6 +172,21 @@ func autostartCmd(args []string) error {
 	default:
 		return fmt.Errorf("unknown autostart action %q, use on, off or status", action)
 	}
+}
+
+// setAutostartPref persists the user's explicit choice so a later bare run
+// never silently re-enables a login item the user turned off
+func setAutostartPref(enabled bool) error {
+	st, err := store.Open()
+	if err != nil {
+		return err
+	}
+	cfg, err := st.Config()
+	if err != nil {
+		return err
+	}
+	cfg.Autostart = &enabled
+	return st.SaveConfig(cfg)
 }
 
 func startCmd() error {

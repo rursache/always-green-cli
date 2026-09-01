@@ -50,6 +50,9 @@ Starting at login is not the same as staying started: `always-green-cli stop`
 stays stopped until you start it again. `always-green-cli uninstall` removes
 the login item along with the daemon.
 
+Your choice is remembered: once you run `autostart off`, a plain
+`always-green-cli` will not turn login start back on for you.
+
 ## When tokens expire
 
 Slack hands out two credentials, and they do not expire together:
