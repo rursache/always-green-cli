@@ -40,7 +40,10 @@ type tickMsg time.Time
 // how many one-second ticks between presence polls
 const presencePollTicks = 30
 
+// importScanMsg carries the scan generation it answers, so a scan the user
+// backed out of cannot be mistaken for the one they started afterwards
 type importScanMsg struct {
+	gen   int
 	found []desktop.Found
 	err   error
 }
@@ -89,6 +92,7 @@ type model struct {
 	// second Enter cannot submit twice or land on the next screen
 	saving    bool
 	importing bool
+	scanGen   int
 	impFound  []desktop.Found
 	impPick   map[int]bool
 	impSel    int
@@ -206,8 +210,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case importScanMsg:
 		// a scan the user backed out of must not yank them off whatever
-		// screen they moved to in the meantime
-		if !m.importing {
+		// screen they moved to in the meantime, nor stand in for a newer one
+		if !m.importing || msg.gen != m.scanGen {
 			return m, nil
 		}
 		m.importing = false
@@ -333,7 +337,8 @@ func (m model) keyList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.importing = true
 		m.screen = screenImport
 		m.impErr = ""
-		return m, scanDesktop
+		m.scanGen++
+		return m, scanDesktop(m.scanGen)
 	case "p":
 		if ws, ok := m.selected(); ok {
 			paused := !ws.Paused
@@ -367,9 +372,11 @@ func (m model) keyList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func scanDesktop() tea.Msg {
-	found, err := importws.Discover()
-	return importScanMsg{found: found, err: err}
+func scanDesktop(gen int) tea.Cmd {
+	return func() tea.Msg {
+		found, err := importws.Discover()
+		return importScanMsg{gen: gen, found: found, err: err}
+	}
 }
 
 func (m model) keyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

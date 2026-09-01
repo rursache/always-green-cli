@@ -66,9 +66,9 @@ func TestStaleScanResultDoesNotChangeScreen(t *testing.T) {
 	}
 
 	for _, msg := range []importScanMsg{
-		{found: []desktop.Found{{Name: "late", TeamID: "T9", Xoxc: "x", Xoxd: "d"}}},
-		{err: errors.New("keychain denied")},
-		{},
+		{gen: m.scanGen, found: []desktop.Found{{Name: "late", TeamID: "T9", Xoxc: "x", Xoxd: "d"}}},
+		{gen: m.scanGen, err: errors.New("keychain denied")},
+		{gen: m.scanGen},
 	} {
 		got := update(t, m, msg)
 		if got.screen != screenSchedule {
@@ -83,7 +83,7 @@ func TestStaleScanResultDoesNotChangeScreen(t *testing.T) {
 func TestScanResultStillLandsWhileWaiting(t *testing.T) {
 	m := testModel(t)
 	m = update(t, m, key("a"))
-	m = update(t, m, importScanMsg{found: []desktop.Found{{Name: "acme", TeamID: "T1", Xoxc: "x", Xoxd: "d"}}})
+	m = update(t, m, importScanMsg{gen: m.scanGen, found: []desktop.Found{{Name: "acme", TeamID: "T1", Xoxc: "x", Xoxd: "d"}}})
 	if m.screen != screenImport || m.importing || len(m.impFound) != 1 {
 		t.Fatalf("expected the pick list, got screen %d importing %v found %d", m.screen, m.importing, len(m.impFound))
 	}
@@ -178,7 +178,7 @@ func TestAddRunsSaveAsCommandAndIgnoresRepeatEnter(t *testing.T) {
 	m = update(t, m, key("a"))
 	m = update(t, m, key("esc"))
 	m = update(t, m, key("a"))
-	m = update(t, m, importScanMsg{})
+	m = update(t, m, importScanMsg{gen: m.scanGen})
 	if m.screen != screenAdd || !m.xoxcIn.Focused() {
 		t.Fatalf("expected the paste screen with the xoxc field focused, got screen %d", m.screen)
 	}
@@ -234,7 +234,7 @@ func TestAddSuccessOpensScheduleForNewWorkspace(t *testing.T) {
 func TestImportRunsSaveAsCommand(t *testing.T) {
 	m := testModel(t)
 	m = update(t, m, key("a"))
-	m = update(t, m, importScanMsg{found: []desktop.Found{{Name: "acme", TeamID: "T1", Xoxc: "x", Xoxd: "d"}}})
+	m = update(t, m, importScanMsg{gen: m.scanGen, found: []desktop.Found{{Name: "acme", TeamID: "T1", Xoxc: "x", Xoxd: "d"}}})
 	m, cmd := keyMsg(t, m, "enter")
 	if cmd == nil || !m.saving {
 		t.Fatalf("import must run as a command: cmd %v saving %v", cmd != nil, m.saving)
@@ -252,10 +252,32 @@ func TestImportRunsSaveAsCommand(t *testing.T) {
 func TestImportWithNothingPickedDoesNotSave(t *testing.T) {
 	m := testModel(t)
 	m = update(t, m, key("a"))
-	m = update(t, m, importScanMsg{found: []desktop.Found{{Name: "acme", TeamID: "T1", Xoxc: "x", Xoxd: "d"}}})
+	m = update(t, m, importScanMsg{gen: m.scanGen, found: []desktop.Found{{Name: "acme", TeamID: "T1", Xoxc: "x", Xoxd: "d"}}})
 	m = update(t, m, key(" "))
 	m, cmd := keyMsg(t, m, "enter")
 	if cmd != nil || m.saving || m.err == "" {
 		t.Fatalf("cmd %v saving %v err %q", cmd != nil, m.saving, m.err)
+	}
+}
+
+// Backing out of a slow scan and starting another leaves two scans in
+// flight; only the newer one's result may be applied, whichever arrives first
+func TestOlderScanResultIsIgnoredAfterRescan(t *testing.T) {
+	m := testModel(t)
+	m = update(t, m, key("a"))
+	first := m.scanGen
+	m = update(t, m, key("esc"))
+	m = update(t, m, key("a"))
+	second := m.scanGen
+	if first == second {
+		t.Fatal("each scan must get its own generation")
+	}
+	m = update(t, m, importScanMsg{gen: first, err: errors.New("stale failure")})
+	if !m.importing || m.err != "" || m.screen != screenImport {
+		t.Fatalf("the older scan must not be applied: importing %v err %q screen %d", m.importing, m.err, m.screen)
+	}
+	m = update(t, m, importScanMsg{gen: second, found: []desktop.Found{{Name: "acme", TeamID: "T1", Xoxc: "x", Xoxd: "d"}}})
+	if m.importing || len(m.impFound) != 1 {
+		t.Fatalf("the newer scan must land: importing %v found %d", m.importing, len(m.impFound))
 	}
 }
