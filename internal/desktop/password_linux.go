@@ -43,9 +43,11 @@ func safeStoragePasswords() ([][]byte, error) {
 		}
 	}
 	// a Flatpak or renamed install can carry another product name, so also
-	// walk every os_crypt item and keep the ones labelled for Slack
+	// walk every os_crypt item and keep the ones whose application names
+	// Slack; the label is the generic "Chromium Safe Storage" for every
+	// Electron app, so it cannot tell them apart
 	if raw, err := keyringRun("secret-tool", "search", "--all", "--unlock", "xdg:schema", osCryptSchema); err == nil {
-		for _, pw := range secretsLabelled(raw, "Slack Safe Storage") {
+		for _, pw := range secretsForApplication(raw, "slack") {
 			add(pw)
 		}
 	}

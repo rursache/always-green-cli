@@ -5,7 +5,9 @@ import (
 	"testing"
 )
 
-func TestSecretsLabelledPicksMatchingItems(t *testing.T) {
+// Every embedder of an unbranded Chromium labels its item "Chromium Safe
+// Storage", only the application attribute tells a Slack item apart
+func TestSecretsForApplicationMatchesByAttribute(t *testing.T) {
 	raw := `[/org/freedesktop/secrets/collection/login/12]
 label = Chrome Safe Storage
 secret = chrome-pw
@@ -14,23 +16,27 @@ schema = chrome_libsecret_os_crypt_password_v2
 attribute.application = chrome
 attribute.xdg:schema = chrome_libsecret_os_crypt_password_v2
 [/org/freedesktop/secrets/collection/login/34]
-label = Slack Safe Storage
+label = Chromium Safe Storage
 secret = slack-pw-one
 attribute.application = Slack
 [/org/freedesktop/secrets/collection/login/35]
-label = Slack Safe Storage
+label = Chromium Safe Storage
 secret = slack-pw-two
-attribute.application = slack-flatpak
+attribute.application = com.slack.Slack
 [/org/freedesktop/secrets/collection/login/36]
-label = Slack Safe Storage
-attribute.application = locked-item
+label = Chromium Safe Storage
+attribute.application = slack-locked
+[/org/freedesktop/secrets/collection/login/37]
+label = Chromium Safe Storage
+secret = other-pw
+attribute.application = signal
 `
-	got := secretsLabelled(raw, "Slack Safe Storage")
+	got := secretsForApplication(raw, "slack")
 	want := []string{"slack-pw-one", "slack-pw-two"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
-	if got := secretsLabelled("", "Slack Safe Storage"); len(got) != 0 {
+	if got := secretsForApplication("", "slack"); len(got) != 0 {
 		t.Fatalf("empty output should yield nothing, got %q", got)
 	}
 }

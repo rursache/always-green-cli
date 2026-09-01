@@ -2,17 +2,20 @@ package desktop
 
 import "strings"
 
-// secretsLabelled picks the secrets out of "secret-tool search --all" output
-// for the items whose label matches. Items are printed as a bracketed object
-// path followed by "key = value" lines, with the secret on its own line
-func secretsLabelled(raw, label string) []string {
+// secretsForApplication picks the secrets out of "secret-tool search --all"
+// output for the os_crypt items whose application attribute names app,
+// matched case-insensitively as a substring so a renamed or Flatpak build
+// still qualifies. Items are printed as a bracketed object path followed by
+// "key = value" lines, with the secret on its own line
+func secretsForApplication(raw, app string) []string {
+	app = strings.ToLower(app)
 	var out []string
-	var itemLabel, itemSecret string
+	var itemApp, itemSecret string
 	flush := func() {
-		if itemLabel == label && itemSecret != "" {
+		if itemSecret != "" && strings.Contains(strings.ToLower(itemApp), app) {
 			out = append(out, itemSecret)
 		}
-		itemLabel, itemSecret = "", ""
+		itemApp, itemSecret = "", ""
 	}
 	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
@@ -25,8 +28,8 @@ func secretsLabelled(raw, label string) []string {
 			continue
 		}
 		switch key {
-		case "label":
-			itemLabel = val
+		case "attribute.application":
+			itemApp = val
 		case "secret":
 			itemSecret = val
 		}
