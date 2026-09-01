@@ -420,43 +420,11 @@ func (m model) submitAdd() (tea.Model, tea.Cmd) {
 		m.err = "paste both xoxc and xoxd"
 		return m, nil
 	}
-	auth, err := slackx.AuthTest(xoxc, xoxd)
+	// the same path the CLI uses, so a pasted workspace records its domain
+	// and everything else the daemon needs to refresh it later on its own
+	f := desktop.Found{Name: strings.TrimSpace(m.nameIn.Value()), Xoxc: xoxc, Xoxd: xoxd}
+	res, err := importws.Save(m.store, f, store.SourcePaste)
 	if err != nil {
-		m.err = "Slack rejected those tokens: " + err.Error()
-		return m, nil
-	}
-	name := strings.TrimSpace(m.nameIn.Value())
-	if name == "" {
-		name = auth.Team
-	}
-	if name == "" {
-		name = "Workspace"
-	}
-	profile, _ := slackx.GetUser(xoxc, xoxd, auth.UserID)
-	ws := store.Workspace{
-		Name:   name,
-		TeamID: auth.TeamID,
-		UserID: auth.UserID,
-		Xoxc:   xoxc,
-		Xoxd:   xoxd,
-		Source: store.SourcePaste,
-		UserInfo: &store.UserInfo{
-			Name: profile.Name, RealName: profile.RealName,
-			DisplayName: profile.DisplayName, Email: profile.Email,
-		},
-	}
-	refresh := false
-	for _, existing := range m.workspaces {
-		if existing.TeamID == auth.TeamID {
-			refresh = true
-			if existing.Schedule != nil {
-				copied := *existing.Schedule
-				ws.Schedule = &copied
-			}
-			break
-		}
-	}
-	if err := m.store.SaveWorkspace(ws); err != nil {
 		m.err = err.Error()
 		return m, nil
 	}
@@ -466,13 +434,14 @@ func (m model) submitAdd() (tea.Model, tea.Cmd) {
 	m.xoxcIn.SetValue("")
 	m.xoxdIn.SetValue("")
 	m.nameIn.SetValue("")
-	if refresh {
+	if !res.Added {
 		m.screen = screenList
-		m.info = "refreshed " + name
+		m.info = "refreshed " + res.Name
 		return m, pollPresence(m.workspaces)
 	}
+	ws, _ := m.store.Workspace(res.TeamID)
 	m.openSchedule(ws)
-	m.info = "added " + name
+	m.info = "added " + res.Name
 	return m, pollPresence(m.workspaces)
 }
 
