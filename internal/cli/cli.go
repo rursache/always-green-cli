@@ -107,8 +107,9 @@ func runDefault() error {
 	if err := start(); err != nil {
 		return err
 	}
-	cfg, _ := st.Config()
-	if cfg.Autostart == nil || *cfg.Autostart {
+	// only the first run sets up login start; once the choice is recorded a
+	// bare run does not need to ask launchd or systemd anything
+	if cfg, _ := st.Config(); cfg.Autostart == nil {
 		enableAutostart()
 	}
 	fmt.Println()
@@ -122,17 +123,23 @@ func runDefault() error {
 
 // enableAutostart registers the login item on first run; it is best effort:
 // staying green right now matters more than surviving a reboot, so a failure
-// is reported but never blocks startup
+// is reported but never blocks startup, and the preference is left unset so
+// the next run tries again
 func enableAutostart() {
-	if !autostart.Supported() || autostart.Enabled() {
+	if !autostart.Supported() {
 		return
 	}
-	if err := autostart.Enable(); err != nil {
-		fmt.Fprintf(os.Stderr, "note: could not set up launch at login (%v)\n", err)
-		fmt.Fprintln(os.Stderr, "      run: "+progName()+" autostart on")
-		return
+	if !autostart.Enabled() {
+		if err := autostart.Enable(); err != nil {
+			fmt.Fprintf(os.Stderr, "note: could not set up launch at login (%v)\n", err)
+			fmt.Fprintln(os.Stderr, "      run: "+progName()+" autostart on")
+			return
+		}
+		fmt.Println("Launch at login: enabled")
 	}
-	fmt.Println("Launch at login: enabled")
+	if err := setAutostartPref(true); err != nil {
+		fmt.Fprintf(os.Stderr, "note: could not remember the launch at login choice (%v)\n", err)
+	}
 }
 
 func autostartCmd(args []string) error {
