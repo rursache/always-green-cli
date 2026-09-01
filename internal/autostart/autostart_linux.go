@@ -3,12 +3,9 @@
 package autostart
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"time"
 )
 
 func supported() bool { return true }
@@ -95,10 +92,4 @@ func enabled() bool {
 	// the unit file can exist while the .wants symlink is gone (a manual
 	// systemctl --user disable), so confirm with systemd
 	return run("systemctl", "--user", "is-enabled", unitName) == nil
-}
-
-func run(name string, args ...string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	return exec.CommandContext(ctx, name, args...).Run()
 }

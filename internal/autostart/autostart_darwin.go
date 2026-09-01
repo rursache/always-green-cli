@@ -3,13 +3,10 @@
 package autostart
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 func supported() bool { return true }
@@ -103,12 +100,6 @@ func enabled() bool {
 
 func guiDomain() string { return fmt.Sprintf("gui/%d", os.Getuid()) }
 func target() string    { return guiDomain() + "/" + Label }
-
-func run(name string, args ...string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	return exec.CommandContext(ctx, name, args...).Run()
-}
 
 func escapeXML(s string) string {
 	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
