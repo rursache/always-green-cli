@@ -598,10 +598,15 @@ func (m model) keyDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "n":
 		m.screen = screenList
 	case "y", "enter":
-		_ = m.store.RemoveWorkspace(m.delTeam)
+		m.screen = screenList
+		if err := m.store.RemoveWorkspace(m.delTeam); err != nil {
+			m.err = "could not remove " + m.delName + ": " + err.Error()
+			m.reload()
+			return m, nil
+		}
 		_ = daemon.Reload()
 		m.reload()
-		m.screen = screenList
+		m.err = ""
 		m.info = "removed " + m.delName
 	}
 	return m, nil

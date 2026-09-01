@@ -2,9 +2,12 @@ package tui
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/rursache/always-green-cli/internal/desktop"
+	"github.com/rursache/always-green-cli/internal/paths"
 	"github.com/rursache/always-green-cli/internal/store"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -82,5 +85,43 @@ func TestScanResultStillLandsWhileWaiting(t *testing.T) {
 	m = update(t, m, importScanMsg{found: []desktop.Found{{Name: "acme", TeamID: "T1", Xoxc: "x", Xoxd: "d"}}})
 	if m.screen != screenImport || m.importing || len(m.impFound) != 1 {
 		t.Fatalf("expected the pick list, got screen %d importing %v found %d", m.screen, m.importing, len(m.impFound))
+	}
+}
+
+func TestDeleteReportsFailure(t *testing.T) {
+	m := testModel(t, store.Workspace{Name: "acme", TeamID: "T1", Xoxc: "xoxc", Xoxd: "xoxd"})
+	m = update(t, m, key("d"))
+	if m.screen != screenDelete {
+		t.Fatalf("expected the delete prompt, got screen %d", m.screen)
+	}
+	// make the store unwritable so the removal cannot go through
+	if err := os.Chmod(paths.WorkspacesFile(), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Dir(paths.WorkspacesFile()), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(filepath.Dir(paths.WorkspacesFile()), 0o700)
+		_ = os.Chmod(paths.WorkspacesFile(), 0o600)
+	})
+	m = update(t, m, key("y"))
+	if m.screen != screenList {
+		t.Fatalf("expected to be back on the list, got screen %d", m.screen)
+	}
+	if m.info != "" || m.err == "" {
+		t.Fatalf("a failed removal must not claim success: info %q err %q", m.info, m.err)
+	}
+	if len(m.workspaces) != 1 {
+		t.Fatalf("workspace should still be listed, got %d", len(m.workspaces))
+	}
+}
+
+func TestDeleteRemovesWorkspace(t *testing.T) {
+	m := testModel(t, store.Workspace{Name: "acme", TeamID: "T1", Xoxc: "xoxc", Xoxd: "xoxd"})
+	m = update(t, m, key("d"))
+	m = update(t, m, key("y"))
+	if m.err != "" || m.info != "removed acme" || len(m.workspaces) != 0 {
+		t.Fatalf("err %q info %q workspaces %d", m.err, m.info, len(m.workspaces))
 	}
 }
