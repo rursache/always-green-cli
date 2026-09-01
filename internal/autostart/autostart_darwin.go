@@ -93,8 +93,12 @@ func enabled() bool {
 	if path == "" {
 		return false
 	}
-	_, err := os.Stat(path)
-	return err == nil
+	if _, err := os.Stat(path); err != nil {
+		return false
+	}
+	// the plist can exist while launchd no longer has it loaded (a manual
+	// bootout, or a bootstrap that partially failed), so confirm with launchd
+	return run("launchctl", "print", target()) == nil
 }
 
 func guiDomain() string { return fmt.Sprintf("gui/%d", os.Getuid()) }
