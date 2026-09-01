@@ -9,8 +9,9 @@ import (
 	"time"
 )
 
-// keyringTimeout bounds each lookup, since an unlock prompt from the keyring
-// can otherwise hold the daemon indefinitely
+// keyringTimeout bounds the whole password hunt, not each lookup: several
+// tools are tried in turn and a locked keyring can stall every one of them,
+// and the daemon's own refresh budget is only 60s
 const keyringTimeout = 15 * time.Second
 
 const osCryptSchema = "chrome_libsecret_os_crypt_password_v2"
@@ -22,6 +23,8 @@ const osCryptSchema = "chrome_libsecret_os_crypt_password_v2"
 // "peanuts" when no keyring is available, so on most desktops the fixed
 // password alone decrypts nothing
 func safeStoragePasswords() ([][]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), keyringTimeout)
+	defer cancel()
 	var out [][]byte
 	seen := map[string]struct{}{}
 	add := func(pw string) {
@@ -38,7 +41,7 @@ func safeStoragePasswords() ([][]byte, error) {
 	// os_crypt stores the item with application set to the product name,
 	// which Electron passes through as the app name verbatim
 	for _, app := range []string{"Slack", "slack"} {
-		if raw, err := keyringRun("secret-tool", "lookup", "application", app); err == nil {
+		if raw, err := keyringRun(ctx, "secret-tool", "lookup", "application", app); err == nil {
 			add(raw)
 		}
 	}
@@ -46,23 +49,24 @@ func safeStoragePasswords() ([][]byte, error) {
 	// walk every os_crypt item and keep the ones whose application names
 	// Slack; the label is the generic "Chromium Safe Storage" for every
 	// Electron app, so it cannot tell them apart
-	if raw, err := keyringRun("secret-tool", "search", "--all", "--unlock", "xdg:schema", osCryptSchema); err == nil {
+	if raw, err := keyringRun(ctx, "secret-tool", "search", "--all", "--unlock", "xdg:schema", osCryptSchema); err == nil {
 		for _, pw := range secretsForApplication(raw, "slack") {
 			add(pw)
 		}
 	}
 	// an unbranded Chromium build such as Electron keeps its KWallet entry
 	// under the generic Chromium names
-	if raw, err := keyringRun("kwallet-query", "-f", "Chromium Keys", "-r", "Chromium Safe Storage", "kdewallet"); err == nil {
+	if raw, err := keyringRun(ctx, "kwallet-query", "-f", "Chromium Keys", "-r", "Chromium Safe Storage", "kdewallet"); err == nil {
 		add(raw)
 	}
 	add("peanuts")
 	return out, nil
 }
 
-func keyringRun(name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), keyringTimeout)
-	defer cancel()
+func keyringRun(ctx context.Context, name string, args ...string) (string, error) {
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
 	raw, err := exec.CommandContext(ctx, name, args...).Output()
 	if err != nil {
 		return "", err
