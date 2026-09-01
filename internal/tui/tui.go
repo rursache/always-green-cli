@@ -194,6 +194,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.presence[msg.teamID] = slackx.Presence{Presence: "invalid"}
 		}
 	case importScanMsg:
+		// a scan the user backed out of must not yank them off whatever
+		// screen they moved to in the meantime
+		if !m.importing {
+			return m, nil
+		}
 		m.importing = false
 		if msg.err != nil {
 			m.impErr = msg.err.Error()
