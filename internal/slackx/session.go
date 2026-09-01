@@ -400,7 +400,10 @@ func (s *Session) markDead() {
 	s.connected = false
 	cb := s.OnTokenDead
 	s.mu.Unlock()
-	s.running.Store(false)
+	// the session stays Running until the callback returns, so a reconciler
+	// that sees invalid_token on a running session knows the death is still
+	// being handled and does not respawn it with the same dead tokens
+	defer s.running.Store(false)
 	if already {
 		return
 	}

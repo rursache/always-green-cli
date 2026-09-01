@@ -44,6 +44,27 @@ func TestMarkDeadNotifiesOnce(t *testing.T) {
 	}
 }
 
+// The daemon reads Running to tell a death that is still being handled from
+// one it may react to, so the flag must only drop once the callback is done
+func TestMarkDeadKeepsRunningUntilCallbackReturns(t *testing.T) {
+	s := NewSession("ws", "T1", "U1", "xoxc", "xoxd")
+	s.running.Store(true)
+	var duringCallback bool
+	s.OnTokenDead = func(string, string) {
+		duringCallback = s.Running()
+		if got := s.Snapshot().Status; got != "invalid_token" {
+			t.Errorf("status inside the callback is %q", got)
+		}
+	}
+	s.markDead()
+	if !duringCallback {
+		t.Fatal("session must still report running while the callback handles the death")
+	}
+	if s.Running() {
+		t.Fatal("session must stop running once the callback returns")
+	}
+}
+
 func TestIsAuthFailUsesStatusNotErrorText(t *testing.T) {
 	for _, tc := range []struct {
 		name string

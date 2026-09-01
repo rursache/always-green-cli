@@ -71,23 +71,18 @@ func TestRefreshWithinReportsTimelyResult(t *testing.T) {
 	}
 }
 
-func TestHealerSettlingCoversClaimAndHandling(t *testing.T) {
+func TestHealerInFlightFollowsClaim(t *testing.T) {
 	h := newHealer()
-	if h.isSettling("T1") {
+	if h.inFlight("T1") {
 		t.Fatal("nothing is in flight yet")
 	}
-	done := h.settling("T1")
-	if !h.isSettling("T1") {
-		t.Fatal("handling a token death must count as settling")
-	}
 	h.claim("T1", time.Now())
-	done()
-	if !h.isSettling("T1") {
-		t.Fatal("a held heal claim must keep the workspace settling")
+	if !h.inFlight("T1") {
+		t.Fatal("a held heal claim must count as in flight")
 	}
 	h.release("T1")
-	if h.isSettling("T1") {
-		t.Fatal("released and handled, nothing should be settling")
+	if h.inFlight("T1") {
+		t.Fatal("released, nothing should be in flight")
 	}
 }
 
@@ -96,19 +91,20 @@ func TestHealerSettlingCoversClaimAndHandling(t *testing.T) {
 // produced the same tokens and nothing else will bring the workspace back
 func TestNeedsRestart(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		status   string
-		running  bool
-		settling bool
-		want     bool
+		name    string
+		status  string
+		running bool
+		healing bool
+		want    bool
 	}{
 		{"healthy", "active", true, false, false},
 		{"errored", "error", true, false, true},
 		{"exited", "stopped", false, false, true},
-		{"dead tokens, heal in flight", "invalid_token", false, true, false},
+		{"dead tokens, callback still handling it", "invalid_token", true, false, false},
+		{"dead tokens, heal outlived the callback", "invalid_token", false, true, false},
 		{"dead tokens, healed to same values", "invalid_token", false, false, true},
 	} {
-		got := needsRestart(slackx.Snapshot{Status: tc.status}, tc.running, tc.settling)
+		got := needsRestart(slackx.Snapshot{Status: tc.status}, tc.running, tc.healing)
 		if got != tc.want {
 			t.Errorf("%s: needsRestart = %v, want %v", tc.name, got, tc.want)
 		}
